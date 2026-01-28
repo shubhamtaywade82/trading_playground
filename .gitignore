@@ -1,0 +1,16 @@
+# Ruby
+*.gem
+*.rbc
+.bundle
+Gemfile.lock
+vendor/bundle
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Local env
+.env
+.env.local
