@@ -25,6 +25,7 @@ ENV['ACCESS_TOKEN'] ||= ENV.fetch('DHAN_ACCESS_TOKEN', nil)
 require 'date'
 require_relative 'lib/technical_indicators'
 require_relative 'lib/ai_caller'
+require_relative 'lib/telegram_notifier'
 require_relative 'lib/mock_market_data' if MOCK_MODE
 
 unless MOCK_MODE
@@ -90,31 +91,45 @@ end
 def build_ai_prompt(symbol, data)
   pcr = data[:call_oi].positive? ? (data[:put_oi].to_f / data[:call_oi]) : 0.0
   <<~PROMPT
-    Analyze the following live market data for #{symbol} options trading (weekly expiry: #{data[:nearest_expiry] || 'N/A'}) and suggest whether to go long on CE (Call Option) for a bullish reversal or long on PE (Put Option) for a bearish reversal. Provide reasoning based on PCR, technical indicators, and price action. Aim for intraday trades with 20k total capital (50% in use = 10k for trading), targeting 5k profit per day as per the PCR Trend Reversal Strategy.
+    #{symbol} options (PCR trend reversal, intraday). Data: Spot #{format_num(data[:spot_price])} | PCR #{format_num(pcr)} | RSI #{format_num(data[:rsi_14])} | Trend #{data[:trend]} | Chg #{data[:last_change]}%.
 
-    - Current Spot Price: #{format_num(data[:spot_price])}
-    - Current OHLC: #{data[:current_ohlc_str]}
-    - Total Call OI: #{data[:call_oi]}
-    - Total Put OI: #{data[:put_oi]}
-    - PCR (Put/Call Ratio): #{format_num(pcr)} (Rising PCR suggests bullish sentiment, falling suggests bearish)
-    - 20-Period SMA: #{format_num(data[:sma_20])}
-    - 14-Period RSI: #{format_num(data[:rsi_14])} (Overbought >70, Oversold <30)
-    - Recent Price Change (last 5-min): #{data[:last_change]}%
-    - Detected Trend: #{data[:trend]}
-
-    Additional Context: Use 5-min chart for confirmation. Enter only on reversals with candlestick patterns. Suggest CE long if data points to bullish reversal (e.g., high PCR flip, oversold RSI), PE long if bearish (low PCR flip, overbought RSI).
+    Reply in 2–4 lines only. Format:
+    • Bias: CE | PE | No trade
+    • Reason: (one short line)
+    • Action: (optional: level or wait)
   PROMPT
 end
 
-def print_and_call_ai(symbol, ai_prompt)
-  puts "\n=== #{symbol} ==="
-  puts "AI Prompt:\n#{ai_prompt}"
+MAX_VERDICT_LEN = 280
 
+def format_summary(symbol, data, ai_response)
+  pcr = data[:call_oi].positive? ? (data[:put_oi].to_f / data[:call_oi]) : 0.0
+  spot = format_num(data[:spot_price])
+  rsi = format_num(data[:rsi_14])
+  line1 = "#{symbol}  Spot #{spot}  PCR #{format_num(pcr)}  RSI #{rsi}  #{data[:trend]}"
+  verdict = ai_response.to_s.strip.gsub(/\n+/, ' ').strip
+  verdict = verdict.empty? ? '—' : verdict.slice(0, MAX_VERDICT_LEN)
+  verdict += '…' if ai_response.to_s.length > MAX_VERDICT_LEN
+  "#{line1}\n→ #{verdict}"
+end
+
+def print_and_call_ai(symbol, ai_prompt, data)
+  ai_response = nil
   ai_provider = ENV['AI_PROVIDER']&.strip&.downcase
-  return unless ai_provider && %w[openai ollama].include?(ai_provider)
+  if ai_provider && %w[openai ollama].include?(ai_provider)
+    ai_response = AiCaller.call(ai_prompt, provider: ai_provider, model: ENV.fetch('AI_MODEL', nil))
+  end
 
-  ai_response = AiCaller.call(ai_prompt, provider: ai_provider, model: ENV.fetch('AI_MODEL', nil))
-  puts "\nAI Analysis and Suggestion:\n#{ai_response}"
+  summary = format_summary(symbol, data, ai_response)
+  puts "\n#{summary}"
+
+  return unless ENV['TELEGRAM_CHAT_ID']
+
+  begin
+    TelegramNotifier.send_message(summary)
+  rescue StandardError => e
+    warn "Telegram send failed: #{e.message}"
+  end
 end
 
 def run_cycle_for(symbol)
@@ -184,12 +199,12 @@ def run_cycle_for(symbol)
     trend: trend,
     last_change: last_change
   }
-  print_and_call_ai(symbol, build_ai_prompt(symbol, data))
+  print_and_call_ai(symbol, build_ai_prompt(symbol, data), data)
 end
 
 def run_cycle_mock(symbol)
   data = MockMarketData.data(symbol)
-  print_and_call_ai(symbol, build_ai_prompt(symbol, data))
+  print_and_call_ai(symbol, build_ai_prompt(symbol, data), data)
 end
 
 def run_cycle

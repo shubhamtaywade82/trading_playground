@@ -34,6 +34,8 @@ Full rules and assumptions: [docs/pcr_trend_reversal_strategy.md](docs/pcr_trend
 
 - `LOOP_INTERVAL=300 ruby generate_ai_prompt.rb` — runs a cycle, sleeps 300 seconds, repeats. Errors in a cycle are logged and the loop continues.
 
+**Telegram:** Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (same as algo_trading_api) to send each symbol’s prompt + AI analysis as Telegram messages (chunked if needed).
+
 **Mock (no Dhan):** `MOCK_DATA=1 ruby generate_ai_prompt.rb` — uses fake market data (no credentials); prompt + AI still run. Use to test AI integration without live data.
 
 **Underlyings:** By default both NIFTY and SENSEX are analyzed per cycle. Override: `UNDERLYINGS=NIFTY,SENSEX` or `UNDERLYING=NIFTY` for a single index.
