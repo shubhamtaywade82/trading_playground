@@ -88,6 +88,7 @@ Update PCR every 5 minutes; watch 5-min chart of underlying.
 - **SENSEX:** Same PCR logic (BSE data); lower options liquidity — prefer ATM, smaller size.
 - **Tools:** Broker OI/PCR; 20-period EMA on 5-min for trend bias (enter in direction of bias).
 - **Risk:** Theta minimal intraday; prefer high-volume days. Track 20–30 days to tune.
+- **Timeframes:** Chart and session recommendations: [Timeframes for intraday options](timeframes_intraday_options.md) (5-min vs 15-min, prime window 10:15–2:30, exit by 3:00 PM).
 
 ---
 
