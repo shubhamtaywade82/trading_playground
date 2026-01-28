@@ -38,7 +38,8 @@ module AiCaller
     config.timeout = ENV.fetch('OLLAMA_TIMEOUT', '60').to_i
 
     client = Ollama::Client.new(config: config)
-    result = client.generate(prompt: prompt, allow_plain_text: true)
-    result.to_s.strip
+    result = client.generate(prompt: prompt)
+    text = result.is_a?(Hash) ? (result['response'] || result[:response]) : result
+    text.to_s.strip
   end
 end
