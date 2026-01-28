@@ -1,0 +1,50 @@
+# RuboCop config for standalone Ruby scripts (no Rails/RSpec)
+AllCops:
+  TargetRubyVersion: 3.1
+  NewCops: enable
+  Exclude:
+    - 'vendor/**/*'
+    - '.bundle/**/*'
+
+Layout/LineLength:
+  Max: 120
+  AllowedPatterns:
+    - '\Ahttps?://'
+
+Style/FrozenStringLiteralComment:
+  Enabled: true
+
+Style/StringLiterals:
+  EnforcedStyle: single_quotes
+  ConsistentQuotesInMultiline: false
+
+Style/Documentation:
+  Enabled: false
+
+Style/MultilineBlockChain:
+  Enabled: false
+
+Style/SafeNavigationChainLength:
+  Max: 4
+
+Naming/MethodParameterName:
+  MinNameLength: 2
+
+Naming/VariableNumber:
+  Enabled: false
+
+Metrics/MethodLength:
+  Max: 70
+
+Metrics/BlockLength:
+  Exclude:
+    - '*.gemspec'
+
+Metrics/AbcSize:
+  Max: 90
+
+Metrics/CyclomaticComplexity:
+  Max: 35
+
+Metrics/PerceivedComplexity:
+  Max: 35

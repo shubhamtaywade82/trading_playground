@@ -18,7 +18,7 @@ module AiCaller
   end
 
   def call_openai(prompt, model: nil)
-    api_key = ENV['OPENAI_API_KEY']
+    api_key = ENV.fetch('OPENAI_API_KEY', nil)
     raise 'OPENAI_API_KEY not set' if api_key.nil? || api_key.empty?
 
     require 'openai'

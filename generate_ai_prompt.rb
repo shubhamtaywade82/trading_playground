@@ -16,8 +16,8 @@
 require 'dotenv'
 Dotenv.load(File.expand_path('.env', __dir__))
 
-ENV['CLIENT_ID']    ||= ENV['DHAN_CLIENT_ID']
-ENV['ACCESS_TOKEN'] ||= ENV['DHAN_ACCESS_TOKEN']
+ENV['CLIENT_ID']    ||= ENV.fetch('DHAN_CLIENT_ID', nil)
+ENV['ACCESS_TOKEN'] ||= ENV.fetch('DHAN_ACCESS_TOKEN', nil)
 
 require 'date'
 require 'dhan_hq'
@@ -33,15 +33,17 @@ SMA_PERIOD        = 20
 RSI_PERIOD        = 14
 
 def underlyings
-  list = ENV['UNDERLYINGS']&.split(',')&.map(&:strip)&.reject(&:empty?)
+  raw = ENV.fetch('UNDERLYINGS', nil)
+  list = raw&.split(',')&.map(&:strip)&.reject(&:empty?)
   return list if list&.any?
 
-  single = ENV['UNDERLYING']&.strip
+  single = ENV.fetch('UNDERLYING', nil)&.strip
   single ? [single] : %w[NIFTY SENSEX]
 end
 
 def extract_oc_and_last_price(option_chain_response)
-  data = option_chain_response.is_a?(Hash) ? (option_chain_response['data'] || option_chain_response) : option_chain_response
+  raw = option_chain_response
+  data = raw.is_a?(Hash) ? (raw['data'] || raw) : raw
   return [nil, nil, nil] unless data
 
   last_price = data['last_price'] || data[:last_price]
@@ -100,10 +102,10 @@ def run_cycle_for(symbol)
   expiries = Array(expiries) if expiries
   nearest_expiry = expiries
                    .filter_map do |e|
-    Date.parse(e.to_s)
-  rescue StandardError
-    nil
-  end
+                     Date.parse(e.to_s)
+                   rescue StandardError
+                     nil
+                   end
                    .select { |d| d >= Date.today }
                    .min
                    &.to_s
@@ -122,7 +124,7 @@ def run_cycle_for(symbol)
     end
   end
 
-  from_ts = (Time.now - INTRADAY_MINUTES * 60).strftime('%Y-%m-%d %H:%M:%S')
+  from_ts = (Time.now - (INTRADAY_MINUTES * 60)).strftime('%Y-%m-%d %H:%M:%S')
   to_ts   = Time.now.strftime('%Y-%m-%d %H:%M:%S')
   intraday = inst.intraday(from_date: from_ts, to_date: to_ts, interval: '5')
   closes = fetch_closes(intraday)
@@ -159,7 +161,7 @@ def run_cycle_for(symbol)
   ai_provider = ENV['AI_PROVIDER']&.strip&.downcase
   return unless ai_provider && %w[openai ollama].include?(ai_provider)
 
-  ai_response = AiCaller.call(ai_prompt, provider: ai_provider, model: ENV['AI_MODEL'])
+  ai_response = AiCaller.call(ai_prompt, provider: ai_provider, model: ENV.fetch('AI_MODEL', nil))
   puts "\nAI Analysis and Suggestion:\n#{ai_response}"
 end
 
