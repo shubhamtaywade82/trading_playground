@@ -19,7 +19,7 @@ Full rules and assumptions: [docs/pcr_trend_reversal_strategy.md](docs/pcr_trend
 
 ## Running `generate_ai_prompt.rb`
 
-1. **Install:** `bundle install` (DhanHQ + openai gems).
+1. **Install:** `bundle install` (DhanHQ, openai, ollama-client).
 2. **Env:** Copy `.env.example` to `.env` and fill in values. Required: `DHAN_CLIENT_ID`, `DHAN_ACCESS_TOKEN`.
 3. **Run:** `ruby generate_ai_prompt.rb` (during market hours).
 4. **Prompt only:** Script always prints the filled prompt. Copy it into any AI if you prefer.
@@ -28,8 +28,7 @@ Full rules and assumptions: [docs/pcr_trend_reversal_strategy.md](docs/pcr_trend
 
 - **OpenAI:** `AI_PROVIDER=openai OPENAI_API_KEY=sk-... ruby generate_ai_prompt.rb`  
   Optional: `OPENAI_MODEL=gpt-4o` (default), `AI_MODEL=gpt-4o-mini`, etc.
-- **Ollama (local):** `AI_PROVIDER=ollama ruby generate_ai_prompt.rb`  
-  Optional: `OLLAMA_HOST=http://localhost:11434`, `OLLAMA_MODEL=llama3` (default).
+- **Ollama (local):** `AI_PROVIDER=ollama ruby generate_ai_prompt.rb` — uses [ollama-client](https://github.com/shubhamtaywade82/ollama-client) gem (`/api/generate`, plain text). Optional: `OLLAMA_HOST`, `OLLAMA_MODEL`, `OLLAMA_TIMEOUT`.
 
 **Optional – run every 5 minutes (loop):**
 

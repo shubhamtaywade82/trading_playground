@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require 'json'
-require 'net/http'
-
 module AiCaller
   module_function
 
@@ -33,17 +30,15 @@ module AiCaller
   end
 
   def call_ollama(prompt, model: nil)
-    base_url = ENV.fetch('OLLAMA_HOST', 'http://localhost:11434')
-    model ||= ENV.fetch('OLLAMA_MODEL', 'llama3')
-    uri      = URI("#{base_url.chomp('/')}/api/generate")
-    req      = Net::HTTP::Post.new(uri)
-    req['Content-Type'] = 'application/json'
-    req.body = { model: model, prompt: prompt, stream: false }.to_json
+    require 'ollama_client'
 
-    resp = Net::HTTP.start(uri.hostname, uri.port, read_timeout: 60) { |http| http.request(req) }
-    raise "Ollama request failed: #{resp.code}" unless resp.is_a?(Net::HTTPSuccess)
+    config = Ollama::Config.new
+    config.base_url = ENV.fetch('OLLAMA_HOST', 'http://localhost:11434')
+    config.model = model || ENV.fetch('OLLAMA_MODEL', 'llama3')
+    config.timeout = ENV.fetch('OLLAMA_TIMEOUT', '60').to_i
 
-    body = JSON.parse(resp.body)
-    body['response'].to_s.strip
+    client = Ollama::Client.new(config: config)
+    result = client.generate(prompt: prompt, allow_plain_text: true)
+    result.to_s.strip
   end
 end
