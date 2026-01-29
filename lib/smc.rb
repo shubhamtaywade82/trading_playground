@@ -50,6 +50,30 @@ module SMC
     end
   end
 
+  # Swing highs with bar index: [{ index: i, value: high }, ...]. For volume/RSI at swing.
+  def swing_highs_with_index(highs, window: 2)
+    return [] if highs.nil? || highs.size < (window * 2) + 1
+
+    (window...(highs.size - window)).filter_map do |i|
+      mid = highs[i]
+      next nil unless (i - window..i + window).all? { |j| j == i || highs[j] <= mid }
+
+      { index: i, value: mid }
+    end
+  end
+
+  # Swing lows with bar index: [{ index: i, value: low }, ...].
+  def swing_lows_with_index(lows, window: 2)
+    return [] if lows.nil? || lows.size < (window * 2) + 1
+
+    (window...(lows.size - window)).filter_map do |i|
+      mid = lows[i]
+      next nil unless (i - window..i + window).all? { |j| j == i || lows[j] >= mid }
+
+      { index: i, value: mid }
+    end
+  end
+
   # Market structure label from last swing highs/lows: HH/HL (bullish), LH/LL (bearish), or Choppy.
   def structure_label(highs, lows, min_swings: 2)
     sh = swing_highs(highs)

@@ -4,7 +4,7 @@ Standalone Ruby scripts for the **PCR Trend Reversal** intraday options strategy
 
 ## Strategy
 
-Full rules and assumptions: [docs/pcr_trend_reversal_strategy.md](docs/pcr_trend_reversal_strategy.md). Chart and session timeframes: [docs/timeframes_intraday_options.md](docs/timeframes_intraday_options.md). Practitioner chart patterns (reversal, continuation, triangles, candlesticks, algo rules): [docs/chart_patterns_reference.md](docs/chart_patterns_reference.md).
+Full rules and assumptions: [docs/pcr_trend_reversal_strategy.md](docs/pcr_trend_reversal_strategy.md). Chart and session timeframes: [docs/timeframes_intraday_options.md](docs/timeframes_intraday_options.md). Practitioner chart patterns: [docs/chart_patterns_reference.md](docs/chart_patterns_reference.md). **Rulebook (theory → execution):** [docs/pattern_detection_rulebook.md](docs/pattern_detection_rulebook.md). Executable pattern detection + index volume: [docs/pattern_detection_algo.md](docs/pattern_detection_algo.md) and `lib/pattern_detection.rb`. **Options-buying pattern engine** (data → analysis → decision → execution): [docs/pattern_engine_integration.md](docs/pattern_engine_integration.md), `run_pattern_engine.rb`, and `lib/indicators/`, `lib/market_context/`, `lib/patterns/`, `lib/options/`, `lib/engine/`.
 
 - **Edge:** PCR (OI) sentiment reversal + 5-min price action confirmation.
 - **Instruments:** Weekly expiry ATM CE/PE only.

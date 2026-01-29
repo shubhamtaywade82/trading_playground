@@ -29,6 +29,30 @@ module TechnicalIndicators
     100 - (100 / (1 + rs))
   end
 
+  def ema(closes, period)
+    return nil if closes.nil? || closes.size < period
+
+    k = 2.0 / (period + 1)
+    seed = closes.first(period).sum / period.to_f
+    (period...closes.size).reduce(seed) { |prev, i| (closes[i] - prev) * k + prev }
+  end
+
+  def avg_volume(volumes, period)
+    return nil if volumes.nil? || volumes.size < period
+
+    volumes.last(period).sum / period.to_f
+  end
+
+  # RSI at a specific bar index (closes[0..index] used). period default 14.
+  def rsi_at(closes, period, index)
+    return nil if closes.nil? || index < period
+
+    slice = closes[0..index]
+    return nil if slice.size < period + 1
+
+    rsi(slice, period)
+  end
+
   # Average True Range (period default 14). Inputs: highs, lows, closes (oldest first).
   def atr(highs, lows, closes, period = 14)
     return nil if highs.nil? || lows.nil? || closes.nil?
