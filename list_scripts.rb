@@ -8,7 +8,7 @@ SCRIPTS = [
   {
     name: 'Dhan (NIFTY/SENSEX options)',
     script: 'generate_ai_prompt.rb',
-    data: 'Dhan API: option chain, 5m OHLC, PCR, SMA, RSI, SMC (structure + FVG), key levels',
+    data: 'Dhan API: option chain, 5m OHLC, PCR, SMA, RSI, SMC (structure + FVG), key levels. No chart patterns (engulfing/H&S/etc.) — those are in run_pattern_engine.',
     ai: 'AI_PROVIDER=ollama or AI_PROVIDER=openai',
     run: 'ruby generate_ai_prompt.rb',
     run_with_ai: 'AI_PROVIDER=ollama ruby generate_ai_prompt.rb',
@@ -39,11 +39,11 @@ SCRIPTS = [
     name: 'Pattern engine (chart patterns → signal)',
     script: 'run_pattern_engine.rb',
     data: 'Chart patterns (engulfing, H&S, double top/bottom, triangle, flag). CSV or CANDLE_SOURCE=dhan|delta.',
-    ai: 'No AI; outputs direction/SL/TP from pattern engine only. Chart patterns here; SMC in Dhan/Delta scripts.',
+    ai: 'No AI; outputs direction/SL/TP from pattern engine only. Chart patterns only here; SMC in Dhan/Delta scripts.',
     run: 'ruby run_pattern_engine.rb',
     run_with_ai: 'N/A (pattern-only). Use CANDLE_SOURCE=delta PATTERN_SYMBOL=BTCUSD for Delta candles.',
     symbols_env: 'PATTERN_SYMBOL (e.g. index, BTCUSD); for Dhan: PATTERN_SECURITY_ID',
-    list_symbols: 'PATTERN_SYMBOL or PATTERN_SECURITY_ID (Dhan). Delta: same as DELTA_SYMBOLS.'
+    list_symbols: 'Delta: PATTERN_SYMBOL=BTCUSD. Dhan index: PATTERN_SECURITY_ID=13 PATTERN_EXCHANGE_SEGMENT=IDX_I PATTERN_INSTRUMENT=INDEX.'
   }
 ].freeze
 

@@ -15,6 +15,13 @@
 
 require 'dotenv'
 Dotenv.load(File.expand_path('.env', __dir__))
+# Allow env from args: ruby run_pattern_engine.rb CANDLE_SOURCE=dhan PATTERN_SECURITY_ID=99926000
+ARGV.each do |arg|
+  next unless arg.include?('=') && !arg.start_with?('-')
+
+  k, v = arg.split('=', 2)
+  ENV[k] = v if k && !k.empty?
+end
 
 require_relative 'lib/candle'
 require_relative 'lib/candle_series'
@@ -46,7 +53,11 @@ candles_1m  = CandleSeries.load(symbol, :m1)
 
 if candles_60m.empty? || candles_15m.empty? || candles_5m.empty?
   puts "No candle data. Add CSV under data/candles/#{symbol}_1m.csv, _5m.csv, _15m.csv, _60m.csv"
-  puts "Or set CANDLE_SOURCE=dhan (with PATTERN_SECURITY_ID) or CANDLE_SOURCE=delta (with PATTERN_SYMBOL e.g. BTCUSD)."
+  puts "Or use API (set env vars before the command):"
+  puts "  Delta: CANDLE_SOURCE=delta PATTERN_SYMBOL=BTCUSD ruby run_pattern_engine.rb"
+  puts "  Dhan:  CANDLE_SOURCE=dhan PATTERN_SECURITY_ID=<id> ruby run_pattern_engine.rb"
+  puts "         For NIFTY/SENSEX index also set: PATTERN_EXCHANGE_SEGMENT=IDX_I PATTERN_INSTRUMENT=INDEX"
+  puts "         Get security_id from Dhan instrument master. Requires DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN."
   exit 0
 end
 

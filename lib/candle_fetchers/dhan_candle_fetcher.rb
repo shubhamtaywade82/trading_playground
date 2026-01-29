@@ -41,7 +41,8 @@ module CandleFetchers
         from_date: from_date.to_s,
         to_date: to_date.to_s
       }
-      data = DhanHQ::Models::HistoricalData.intraday(params)
+      raw = DhanHQ::Models::HistoricalData.intraday(params)
+      data = unwrap_charts_response(raw)
       arrays_to_candles(data)
     rescue StandardError
       []
@@ -57,7 +58,8 @@ module CandleFetchers
         from_date: from_date.to_s,
         to_date: to_date.to_s
       }
-      data = DhanHQ::Models::HistoricalData.daily(params)
+      raw = DhanHQ::Models::HistoricalData.daily(params)
+      data = unwrap_charts_response(raw)
       arrays_to_candles(data)
     rescue StandardError
       []
@@ -75,6 +77,14 @@ module CandleFetchers
 
     def interval_from_timeframe(tf)
       INTERVAL[tf]
+    end
+
+    # API may return { data: { open: [], close: [] } } or { result: ... }. Use inner hash.
+    def unwrap_charts_response(raw)
+      return raw unless raw.is_a?(Hash)
+
+      inner = raw['data'] || raw[:data] || raw['result'] || raw[:result]
+      inner.is_a?(Hash) ? inner : raw
     end
 
     def arrays_to_candles(data)
