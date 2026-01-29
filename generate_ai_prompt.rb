@@ -47,6 +47,14 @@ RSI_PERIOD         = 14
 # Intraday range: from_date < to_date; up to 5 days in one request (Dhan allows multi-day intraday).
 DHAN_INTRADAY_DAYS = ENV.fetch('DHAN_INTRADAY_DAYS', '5').to_i.clamp(1, 90)
 
+# System prompt so the model thinks as NIFTY/SENSEX options-buying analyst, not generic.
+DHAN_OPTIONS_SYSTEM_PROMPT = <<~TEXT.strip.freeze
+  You are an options analyst focused only on NIFTY and SENSEX index options for intraday trading.
+  Strategy: options buying only — buy CE when bullish, buy PE when bearish. No option selling.
+  Use PCR, RSI, trend (vs SMA), SMC structure, and key levels together; prefer "No trade" when signals conflict or are weak.
+  Reply in 2–4 lines: Bias (Buy CE / Buy PE / No trade), Reason (one short line), optional Action (level or wait). Do not give generic market commentary; stick to this strategy and the data provided.
+TEXT
+
 def underlyings
   raw = ENV.fetch('UNDERLYINGS', nil)
   list = raw&.split(',')&.map(&:strip)&.reject(&:empty?)
@@ -226,7 +234,7 @@ def print_and_call_ai(symbol, ai_prompt, data)
   ai_response = nil
   ai_provider = ENV['AI_PROVIDER']&.strip&.downcase
   if ai_provider && %w[openai ollama].include?(ai_provider)
-    ai_response = AiCaller.call(ai_prompt, provider: ai_provider, model: ENV.fetch('AI_MODEL', nil))
+    ai_response = AiCaller.call(ai_prompt, provider: ai_provider, model: ENV.fetch('AI_MODEL', nil), system_prompt: DHAN_OPTIONS_SYSTEM_PROMPT)
   end
 
   puts FormatDhanReport.format_console(symbol, data, ai_response)
