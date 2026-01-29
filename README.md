@@ -51,7 +51,7 @@ Full rules and assumptions: [docs/pcr_trend_reversal_strategy.md](docs/pcr_trend
 Set `DELTA_API_KEY` and `DELTA_API_SECRET` in `.env`. Use the Ruby client:
 
 ```ruby
-require_relative 'lib/delta_exchange_client'
+require_relative 'lib/delta/client'
 client = DeltaExchangeClient.new
 # Public (no auth)
 client.ticker('BTCUSD')
@@ -61,6 +61,15 @@ client.wallet_balances
 client.orders(states: 'open')
 client.place_order(product_symbol: 'BTCUSD', size: 1, side: 'buy', order_type: 'limit_order', limit_price: '85000')
 client.cancel_order(id: 12345, product_id: 27)
+```
+
+**Action logging and verification:**
+Each AI suggestion is appended to `log/delta_ai_actions.jsonl` (timestamp, symbol, market snapshot, bias, reason, action, and extracted price levels). Disable with `DELTA_LOG_ACTIONS=0`. To check whether suggested levels were hit by current price:
+
+```bash
+ruby verify_delta_actions.rb --last 20
+ruby verify_delta_actions.rb --since 2026-01-29
+ruby verify_delta_actions.rb --hours 24 --no-fetch   # print log only, no API call
 ```
 
 **Python:** `pip install delta-rest-client` (see `requirements.txt`). Run `python3 delta_example.py`.

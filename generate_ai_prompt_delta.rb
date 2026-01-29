@@ -12,10 +12,11 @@
 require 'dotenv'
 Dotenv.load(File.expand_path('.env', __dir__))
 
-require_relative 'lib/delta_exchange_client'
+require_relative 'lib/delta/client'
+require_relative 'lib/delta/format_report'
+require_relative 'lib/delta/action_logger'
 require_relative 'lib/technical_indicators'
 require_relative 'lib/smc'
-require_relative 'lib/format_delta_report'
 require_relative 'lib/ai_caller'
 require_relative 'lib/telegram_notifier'
 
@@ -68,6 +69,8 @@ def print_and_call_ai(symbol, ai_prompt, data)
   end
 
   puts FormatDeltaReport.format_console(symbol, data, ai_response)
+
+  DeltaActionLogger.log(symbol, data, ai_response)
 
   return unless ENV['TELEGRAM_CHAT_ID']
 

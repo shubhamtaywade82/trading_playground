@@ -14,3 +14,6 @@ vendor/bundle
 # Local env
 .env
 .env.local
+
+# Action log (optional: remove to track)
+log/
