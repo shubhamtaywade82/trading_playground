@@ -2,11 +2,12 @@
 # frozen_string_literal: true
 
 # Options-buying pattern engine: data → analysis → decision → execution.
-# Load candles from data/candles/*.csv or pass in-memory. No globals.
+# Candles: CSV (data/candles/*.csv) or API when CANDLE_SOURCE=dhan|delta.
 #
 # Usage:
 #   ruby run_pattern_engine.rb
-#   (requires data/candles/index_1m.csv, index_5m.csv, index_15m.csv, index_60m.csv)
+#   CSV: add data/candles/{PATTERN_SYMBOL}_1m.csv, _5m.csv, _15m.csv, _60m.csv
+#   API: CANDLE_SOURCE=dhan PATTERN_SECURITY_ID=1333 (Dhan); or CANDLE_SOURCE=delta PATTERN_SYMBOL=BTCUSD (Delta India)
 #
 # Or from code:
 #   context = { candles_60m: ..., candles_15m: ..., candles_5m: ..., candles_1m: nil, iv_percentile: 50, dte: 3 }
@@ -45,7 +46,7 @@ candles_1m  = CandleSeries.load(symbol, :m1)
 
 if candles_60m.empty? || candles_15m.empty? || candles_5m.empty?
   puts "No candle data. Add CSV under data/candles/#{symbol}_1m.csv, _5m.csv, _15m.csv, _60m.csv"
-  puts "Or wire CandleSeries.load to your fetcher (DhanHQ, Delta, etc.)."
+  puts "Or set CANDLE_SOURCE=dhan (with PATTERN_SECURITY_ID) or CANDLE_SOURCE=delta (with PATTERN_SYMBOL e.g. BTCUSD)."
   exit 0
 end
 

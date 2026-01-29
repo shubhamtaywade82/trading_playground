@@ -4,15 +4,41 @@ require 'csv'
 require_relative 'candle'
 
 # Load candles by symbol and timeframe. No globals, no magic.
-# data/candles/{symbol}_1m.csv etc. or pass arrays from fetcher.
+# data/candles/{symbol}_1m.csv etc., or API when CANDLE_SOURCE=dhan|delta (see .env.example).
 module CandleSeries
   SUFFIX = { m1: '1m', m5: '5m', m15: '15m', m60: '60m' }.freeze
 
-  def self.load(symbol, timeframe)
+  def self.load(symbol, timeframe, fetcher: nil)
+    f = fetcher || fetcher_from_env
+    return f.fetch(symbol, timeframe) if f
+
     path = path_for(symbol, timeframe)
     return from_csv(path) if path && File.file?(path)
 
     []
+  end
+
+  def self.fetcher_from_env
+    source = ENV['CANDLE_SOURCE']&.strip&.downcase
+    return nil if source.nil? || source.empty?
+
+    case source
+    when 'delta'
+      require_relative 'candle_fetchers/delta_candle_fetcher'
+      CandleFetchers::DeltaCandleFetcher.new
+    when 'dhan'
+      security_id = ENV['PATTERN_SECURITY_ID'] || ENV['DHAN_SECURITY_ID']
+      return nil if security_id.to_s.empty?
+
+      require_relative 'candle_fetchers/dhan_candle_fetcher'
+      CandleFetchers::DhanCandleFetcher.new(
+        security_id: security_id,
+        exchange_segment: ENV['PATTERN_EXCHANGE_SEGMENT'] || 'NSE_EQ',
+        instrument: ENV['PATTERN_INSTRUMENT'] || 'EQUITY'
+      )
+    else
+      nil
+    end
   end
 
   def self.from_csv(path)
