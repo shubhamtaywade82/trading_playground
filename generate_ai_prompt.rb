@@ -1,8 +1,9 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# Generates an AI prompt with live NIFTY and/or SENSEX data (PCR, OHLC, intraday, indicators)
-# for the PCR Trend Reversal strategy. Run during market hours.
+# Generates an AI prompt with live NIFTY and/or SENSEX data: PCR, OHLC, intraday 5m,
+# SMA/RSI, SMC (structure + FVG), key levels (resistance/support). For PCR Trend Reversal.
+# Run during market hours.
 #
 # Setup: export DHAN_CLIENT_ID=... DHAN_ACCESS_TOKEN=...
 #        (or CLIENT_ID / ACCESS_TOKEN — gem uses these)
@@ -24,7 +25,9 @@ ENV['ACCESS_TOKEN'] ||= ENV.fetch('DHAN_ACCESS_TOKEN', nil)
 
 require 'date'
 require_relative 'lib/technical_indicators'
+require_relative 'lib/smc'
 require_relative 'lib/ai_caller'
+require_relative 'lib/dhan/format_report'
 require_relative 'lib/telegram_notifier'
 require_relative 'lib/mock_market_data' if MOCK_MODE
 
@@ -71,9 +74,46 @@ def sum_oi(oc, side)
 end
 
 def fetch_closes(intraday_response)
-  return [] unless intraday_response.is_a?(Array)
+  ohlc = fetch_ohlc_arrays(intraday_response)
+  ohlc[:closes]
+end
 
-  intraday_response.map { |c| c.is_a?(Hash) ? (c['close'] || c[:close]) : nil }.compact.map(&:to_f)
+# Dhan charts API returns Hash with open/high/low/close/timestamp arrays (or nested under "data").
+# Some clients return Array of candle hashes. Normalize both to { opens:, highs:, lows:, closes: }.
+def fetch_ohlc_arrays(intraday_response)
+  empty = { opens: [], highs: [], lows: [], closes: [] }
+  raw = intraday_response.is_a?(Hash) && (intraday_response['data'] || intraday_response[:data]).is_a?(Hash) ? (intraday_response['data'] || intraday_response[:data]) : intraday_response
+
+  if raw.is_a?(Hash)
+    closes = raw['close'] || raw[:close]
+    return empty unless closes.is_a?(Array) && closes.any?
+
+    n = closes.size
+    opens = Array(raw['open'] || raw[:open]).map(&:to_f)
+    highs = Array(raw['high'] || raw[:high]).map(&:to_f)
+    lows  = Array(raw['low'] || raw[:low]).map(&:to_f)
+    closes = closes.map(&:to_f)
+    opens = opens.first(n).concat(closes.first(1) * (n - opens.size)) if opens.size < n
+    highs = highs.first(n).concat(closes.first(1) * (n - highs.size)) if highs.size < n
+    lows  = lows.first(n).concat(closes.first(1) * (n - lows.size)) if lows.size < n
+    return { opens: opens.first(n), highs: highs.first(n), lows: lows.first(n), closes: closes }
+  end
+
+  return empty unless raw.is_a?(Array)
+
+  opens  = raw.map { |c| c.is_a?(Hash) ? (c['open'] || c[:open]) : nil }.compact.map(&:to_f)
+  highs  = raw.map { |c| c.is_a?(Hash) ? (c['high'] || c[:high]) : nil }.compact.map(&:to_f)
+  lows   = raw.map { |c| c.is_a?(Hash) ? (c['low'] || c[:low]) : nil }.compact.map(&:to_f)
+  closes = raw.map { |c| c.is_a?(Hash) ? (c['close'] || c[:close]) : nil }.compact.map(&:to_f)
+  { opens: opens, highs: highs, lows: lows, closes: closes }
+end
+
+def key_levels_from_smc(highs, lows)
+  return { resistance: [], support: [] } if highs.nil? || lows.nil? || highs.size < 5 || lows.size < 5
+
+  sh = SMC.swing_highs(highs)
+  sl = SMC.swing_lows(lows)
+  { resistance: sh.last(3).reverse, support: sl.last(3).reverse }
 end
 
 def trend_label(spot, sma)
@@ -88,29 +128,26 @@ def format_num(value)
   value.is_a?(Numeric) ? value.round(2) : value
 end
 
-def build_ai_prompt(symbol, data)
-  pcr = data[:call_oi].positive? ? (data[:put_oi].to_f / data[:call_oi]) : 0.0
-  <<~PROMPT
-    #{symbol} options (PCR trend reversal, intraday). Data: Spot #{format_num(data[:spot_price])} | PCR #{format_num(pcr)} | RSI #{format_num(data[:rsi_14])} | Trend #{data[:trend]} | Chg #{data[:last_change]}%.
-
-    Reply in 2–4 lines only. Format:
-    • Bias: CE | PE | No trade
-    • Reason: (one short line)
-    • Action: (optional: level or wait)
-  PROMPT
+def format_levels(arr)
+  arr.is_a?(Array) && arr.any? ? arr.map { |x| format_num(x) }.join(', ') : '—'
 end
 
-MAX_VERDICT_LEN = 280
-
-def format_summary(symbol, data, ai_response)
+def build_ai_prompt(symbol, data)
   pcr = data[:call_oi].positive? ? (data[:put_oi].to_f / data[:call_oi]) : 0.0
-  spot = format_num(data[:spot_price])
-  rsi = format_num(data[:rsi_14])
-  line1 = "#{symbol}  Spot #{spot}  PCR #{format_num(pcr)}  RSI #{rsi}  #{data[:trend]}"
-  verdict = ai_response.to_s.strip.gsub(/\n+/, ' ').strip
-  verdict = verdict.empty? ? '—' : verdict.slice(0, MAX_VERDICT_LEN)
-  verdict += '…' if ai_response.to_s.length > MAX_VERDICT_LEN
-  "#{line1}\n→ #{verdict}"
+  levels = data[:key_levels] || {}
+  res = format_levels(levels[:resistance])
+  sup = format_levels(levels[:support])
+
+  lines = []
+  lines << "#{symbol} options (PCR trend reversal, intraday). Data: Spot #{format_num(data[:spot_price])} | PCR #{format_num(pcr)} | RSI #{format_num(data[:rsi_14])} | Trend #{data[:trend]} | Chg #{data[:last_change]}%."
+  lines << "Key levels — Resistance: #{res} | Support: #{sup}"
+  lines << "SMC: #{data[:smc_summary] || '—'}"
+  lines << ""
+  lines << "Reply in 2–4 lines only. Format:"
+  lines << "• Bias: CE | PE | No trade"
+  lines << "• Reason: (one short line)"
+  lines << "• Action: (optional: level or wait)"
+  lines.join("\n")
 end
 
 def print_and_call_ai(symbol, ai_prompt, data)
@@ -120,13 +157,12 @@ def print_and_call_ai(symbol, ai_prompt, data)
     ai_response = AiCaller.call(ai_prompt, provider: ai_provider, model: ENV.fetch('AI_MODEL', nil))
   end
 
-  summary = format_summary(symbol, data, ai_response)
-  puts "\n#{summary}"
+  puts FormatDhanReport.format_console(symbol, data, ai_response)
 
   return unless ENV['TELEGRAM_CHAT_ID']
 
   begin
-    TelegramNotifier.send_message(summary)
+    TelegramNotifier.send_message(FormatDhanReport.format_telegram(symbol, data, ai_response))
   rescue StandardError => e
     warn "Telegram send failed: #{e.message}"
   end
@@ -173,10 +209,10 @@ def run_cycle_for(symbol)
     end
   end
 
-  from_ts = (Time.now - (INTRADAY_MINUTES * 60)).strftime('%Y-%m-%d %H:%M:%S')
-  to_ts   = Time.now.strftime('%Y-%m-%d %H:%M:%S')
-  intraday = inst.intraday(from_date: from_ts, to_date: to_ts, interval: '5')
-  closes = fetch_closes(intraday)
+  today = Date.today.to_s
+  intraday = inst.intraday(from_date: today, to_date: today, interval: '5')
+  ohlc = fetch_ohlc_arrays(intraday)
+  closes = ohlc[:closes]
 
   sma_20 = TechnicalIndicators.sma(closes, SMA_PERIOD)
   rsi_14 = TechnicalIndicators.rsi(closes, RSI_PERIOD)
@@ -188,6 +224,9 @@ def run_cycle_for(symbol)
                   'N/A'
                 end
 
+  smc_summary = SMC.summary(ohlc[:opens], ohlc[:highs], ohlc[:lows], closes, spot_price)
+  key_levels  = key_levels_from_smc(ohlc[:highs], ohlc[:lows])
+
   data = {
     spot_price: spot_price,
     current_ohlc_str: current_ohlc_str,
@@ -197,7 +236,9 @@ def run_cycle_for(symbol)
     sma_20: sma_20,
     rsi_14: rsi_14,
     trend: trend,
-    last_change: last_change
+    last_change: last_change,
+    smc_summary: smc_summary,
+    key_levels: key_levels
   }
   print_and_call_ai(symbol, build_ai_prompt(symbol, data), data)
 end
@@ -208,14 +249,17 @@ def run_cycle_mock(symbol)
 end
 
 def run_cycle
-  puts "Timestamp: #{Time.now.strftime('%Y-%m-%d %H:%M:%S')}"
+  ts = Time.now.strftime('%Y-%m-%d %H:%M:%S')
+  puts "\n  ═════════════════════════════════════════════"
+  puts "  Dhan · #{ts}"
+  puts "  ═════════════════════════════════════════════"
   if MOCK_MODE
-    puts "(Mock data — no Dhan API)\n"
-    underlyings.each { |symbol| run_cycle_mock(symbol) }
-  else
-    underlyings.each { |symbol| run_cycle_for(symbol) }
+    puts "  (Mock data — no Dhan API)\n"
   end
-  puts "\n--- End of Cycle ---\n"
+  underlyings.each do |symbol|
+    MOCK_MODE ? run_cycle_mock(symbol) : run_cycle_for(symbol)
+  end
+  puts "\n  End of cycle\n\n"
 end
 
 loop_interval = ENV['LOOP_INTERVAL']&.strip&.to_i

@@ -18,7 +18,9 @@ module MockMarketData
       sma_20: base + rand(-30..30),
       rsi_14: rand(35..75),
       trend: ['Bullish (above SMA)', 'Bearish (below SMA)', 'Neutral'].sample,
-      last_change: rand(-0.8..0.8).round(2)
+      last_change: rand(-0.8..0.8).round(2),
+      smc_summary: 'Structure HH/HL | Bullish FVG (mock)',
+      key_levels: { resistance: [base + 80, base + 50], support: [base - 50, base - 80] }
     }
   end
 end
