@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 # Generates an AI prompt with live NIFTY and/or SENSEX data: PCR, OHLC, intraday 5m,
-# SMA/RSI, SMC (structure + FVG), key levels (resistance/support). For PCR Trend Reversal.
+# SMA/RSI, SMC, key levels. Focus: options buying only — buy CE when bullish, buy PE when bearish (PCR trend reversal).
 # Run during market hours.
 #
 # Setup: export DHAN_CLIENT_ID=... DHAN_ACCESS_TOKEN=...
@@ -210,13 +210,13 @@ def build_ai_prompt(symbol, data)
   lines = []
   iv_str = [data[:atm_iv_ce], data[:atm_iv_pe]].any? ? " | ATM IV CE #{format_num(data[:atm_iv_ce])} / PE #{format_num(data[:atm_iv_pe])}" : ''
   vol_str = data[:total_volume].to_i.positive? ? " | OC Vol #{data[:total_volume]}" : ''
-  lines << "#{symbol} options (PCR trend reversal, intraday). Data: Spot #{format_num(data[:spot_price])} | PCR #{format_num(pcr)} | RSI #{format_num(data[:rsi_14])} | Trend #{data[:trend]} | Chg #{data[:last_change]}%.#{iv_str}#{vol_str}"
+  lines << "#{symbol} options — buying only: buy CE when bullish, buy PE when bearish (PCR trend reversal, intraday). Data: Spot #{format_num(data[:spot_price])} | PCR #{format_num(pcr)} | RSI #{format_num(data[:rsi_14])} | Trend #{data[:trend]} | Chg #{data[:last_change]}%.#{iv_str}#{vol_str}"
   lines << "Key levels — Resistance: #{res} | Support: #{sup}"
   lines << "SMC: #{data[:smc_summary] || '—'}"
   lines << (data[:pattern_summary] || 'Pattern: None')
   lines << ""
-  lines << "Reply in 2–4 lines only. Format:"
-  lines << "• Bias: CE | PE | No trade"
+  lines << "Options buying only (no selling). Reply in 2–4 lines. Format:"
+  lines << "• Bias: Buy CE (bullish) | Buy PE (bearish) | No trade"
   lines << "• Reason: (one short line)"
   lines << "• Action: (optional: level or wait)"
   lines.join("\n")

@@ -8,7 +8,7 @@ SCRIPTS = [
   {
     name: 'Dhan (NIFTY/SENSEX options)',
     script: 'generate_ai_prompt.rb',
-    data: 'Dhan API: option chain, 5m OHLC, PCR, SMA, RSI, SMC, key levels, chart pattern (engulfing/H&S/etc.) — for NIFTY and SENSEX.',
+    data: 'Dhan API: option chain, 5m OHLC, PCR, SMA, RSI, SMC, chart pattern. Focus: options buying — buy CE (bullish) / PE (bearish). NIFTY/SENSEX.',
     ai: 'AI_PROVIDER=ollama or AI_PROVIDER=openai',
     run: 'ruby generate_ai_prompt.rb',
     run_with_ai: 'AI_PROVIDER=ollama ruby generate_ai_prompt.rb',

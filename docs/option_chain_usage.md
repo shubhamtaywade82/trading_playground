@@ -1,5 +1,7 @@
 # Option Chain Data Usage (Dhan)
 
+**Focus:** Options **buying** only — buy CE when bullish, buy PE when bearish. No option selling.
+
 The Dhan **Option Chain** API (`POST /optionchain`) returns, per strike: CE/PE data including OI, greeks, volume, bid/ask, last price, and implied volatility. This doc describes what we use from that response in `generate_ai_prompt.rb`.
 
 ## Used in analysis
