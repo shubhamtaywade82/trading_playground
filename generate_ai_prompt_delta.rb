@@ -15,6 +15,7 @@ Dotenv.load(File.expand_path('.env', __dir__))
 require_relative 'lib/delta/client'
 require_relative 'lib/delta/format_report'
 require_relative 'lib/delta/action_logger'
+require_relative 'lib/delta/system_prompts'
 require_relative 'lib/delta/analysis'
 require_relative 'lib/candle'
 require_relative 'lib/candle_series'
@@ -130,7 +131,8 @@ def print_and_call_ai(symbol, ai_prompt, data)
   ai_response = nil
   ai_provider = ENV['AI_PROVIDER']&.strip&.downcase
   if ai_provider && %w[openai ollama].include?(ai_provider)
-    ai_response = AiCaller.call(ai_prompt, provider: ai_provider, model: ENV.fetch('AI_MODEL', nil))
+    ai_response = AiCaller.call(ai_prompt, provider: ai_provider, model: ENV.fetch('AI_MODEL', nil),
+                                system_prompt: Delta::SystemPrompts::DELTA_FUTURES_SYSTEM_PROMPT)
   end
 
   puts FormatDeltaReport.format_console(symbol, data, ai_response)

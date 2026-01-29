@@ -3,20 +3,14 @@
 require 'timeout'
 require_relative '../../ai_caller'
 require_relative '../action_logger'
+require_relative '../system_prompts'
 
 # Professional futures trader lens: builds a focused prompt and parses structured verdict from Ollama.
-# Prefer Ollama for speed; structured output (Bias, Reason, Action, Conviction). Safe fallback on timeout/error.
+# Uses Delta::SystemPrompts::DELTA_FUTURES_SYSTEM_PROMPT via AiCaller. Safe fallback on timeout/error.
 module Delta
   module Agents
     class ThinkingAgent
       DEFAULT_AI_TIMEOUT = 25
-      SYSTEM_PROMPT = <<~PROMPT.strip
-        You are a professional futures trader. Use only the data below. Reply in exactly this format:
-        Bias: Long | Short | No trade
-        Reason: (one short line)
-        Action: (level or wait)
-        Conviction: High | Medium | Low
-      PROMPT
 
       def initialize(ai_caller: nil)
         @ai_caller = ai_caller || AiCaller
@@ -43,7 +37,8 @@ module Delta
       def call_ai_with_timeout(prompt, provider, model, timeout_sec)
         Timeout.timeout(timeout_sec) do
           ollama_timeout = provider == 'ollama' ? timeout_sec : nil
-          @ai_caller.call(prompt, provider: provider, model: model, timeout: ollama_timeout)
+          @ai_caller.call(prompt, provider: provider, model: model, timeout: ollama_timeout,
+                          system_prompt: Delta::SystemPrompts::DELTA_FUTURES_SYSTEM_PROMPT)
         end
       end
 
@@ -73,7 +68,7 @@ module Delta
         parts << "OB #{ob[:imbalance_ratio]}" if ob && ob[:imbalance_ratio]
         parts << (context[:smc_summary] || '—')
 
-        "#{SYSTEM_PROMPT}\n\n#{parts.join("\n")}"
+        parts.join("\n")
       end
 
       def format_levels(arr)
