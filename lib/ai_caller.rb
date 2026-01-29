@@ -6,10 +6,11 @@ module AiCaller
   # Returns AI response string or nil on error.
   # provider: 'openai' | 'ollama'
   # model: optional; defaults to gpt-4o (openai) or llama3 (ollama)
-  def call(prompt, provider: 'openai', model: nil)
+  # timeout: optional; Ollama only, seconds (default from OLLAMA_TIMEOUT or 30)
+  def call(prompt, provider: 'openai', model: nil, timeout: nil)
     case provider.to_s.downcase
     when 'openai' then call_openai(prompt, model: model)
-    when 'ollama' then call_ollama(prompt, model: model)
+    when 'ollama' then call_ollama(prompt, model: model, timeout: timeout)
     else raise ArgumentError, "Unsupported AI provider: #{provider}"
     end
   end
@@ -29,13 +30,13 @@ module AiCaller
     content.to_s.strip
   end
 
-  def call_ollama(prompt, model: nil)
+  def call_ollama(prompt, model: nil, timeout: nil)
     require 'ollama_client'
 
     config = Ollama::Config.new
     config.base_url = ENV.fetch('OLLAMA_HOST', 'http://localhost:11434')
     config.model = model || ENV.fetch('OLLAMA_MODEL', 'llama3')
-    config.timeout = ENV.fetch('OLLAMA_TIMEOUT', '60').to_i
+    config.timeout = (timeout || ENV.fetch('OLLAMA_TIMEOUT', '30')).to_i
 
     client = Ollama::Client.new(config: config)
     result = client.generate(prompt: prompt)
