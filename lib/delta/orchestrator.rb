@@ -3,6 +3,7 @@
 require_relative 'agents'
 require_relative 'format_report'
 require_relative 'action_logger'
+require_relative 'pipeline_logger'
 require_relative 'client'
 
 # Runs the trading pipeline: MarketData → Analysis → Thinking → Risk → (optional) Execution.
@@ -39,7 +40,7 @@ module Delta
       risk = @risk.suggest(context, verdict)
       exec_result = @execution.execute(symbol, verdict, risk, context)
 
-      report_and_log(symbol, context, verdict, risk, exec_result)
+      report_and_log(symbol, market_data: market_data, context: context, verdict: verdict, risk: risk, exec_result: exec_result)
       exec_result
     end
 
@@ -51,12 +52,13 @@ module Delta
       list&.any? ? list : %w[BTCUSD ETHUSD]
     end
 
-    def report_and_log(symbol, context, verdict, risk, exec_result)
+    def report_and_log(symbol, market_data:, context:, verdict:, risk:, exec_result:)
       ai_response = verdict[:raw].to_s
       puts FormatDeltaReport.format_console(symbol, context, ai_response)
       append_verdict_to_console(verdict, risk, exec_result)
       puts "  Pipeline: MarketData → Analysis → Thinking → Risk → Execution"
       DeltaActionLogger.log(symbol, context, ai_response)
+      Delta::PipelineLogger.log(symbol, market_data: market_data, context: context, verdict: verdict, risk: risk, exec_result: exec_result)
       send_telegram_if_configured(symbol, context, ai_response)
     end
 

@@ -4,7 +4,7 @@ Standalone Ruby scripts for the **PCR Trend Reversal** intraday options strategy
 
 ## Strategy
 
-Full rules and assumptions: [docs/pcr_trend_reversal_strategy.md](docs/pcr_trend_reversal_strategy.md). Chart and session timeframes: [docs/timeframes_intraday_options.md](docs/timeframes_intraday_options.md).
+Full rules and assumptions: [docs/pcr_trend_reversal_strategy.md](docs/pcr_trend_reversal_strategy.md). Chart and session timeframes: [docs/timeframes_intraday_options.md](docs/timeframes_intraday_options.md). Practitioner chart patterns (reversal, continuation, triangles, candlesticks, algo rules): [docs/chart_patterns_reference.md](docs/chart_patterns_reference.md).
 
 - **Edge:** PCR (OI) sentiment reversal + 5-min price action confirmation.
 - **Instruments:** Weekly expiry ATM CE/PE only.
@@ -13,7 +13,7 @@ Full rules and assumptions: [docs/pcr_trend_reversal_strategy.md](docs/pcr_trend
 
 ## Repo layout
 
-- `docs/` — Strategy doc and any notes.
+- `docs/` — Strategy doc, chart patterns reference, and notes.
 - `lib/` — Shared helpers (e.g. `technical_indicators.rb`).
 - `generate_ai_prompt.rb` — Fetches live NIFTY data (PCR, OHLC, 5-min intraday, SMA, RSI) and prints an AI prompt for CE/PE reversal suggestions.
 
