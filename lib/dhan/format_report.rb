@@ -34,11 +34,20 @@ module FormatDhanReport
     format("  ╭#{'─' * (WIDTH - 2)}╮\n  │ %-#{WIDTH - 4}s │\n  ╰#{'─' * (WIDTH - 2)}╯", title)
   end
 
+  def format_verdict_block(raw)
+    return '  — No AI verdict' if raw.to_s.strip.empty?
+
+    text = raw.strip.gsub(/\n+/, ' ').strip.slice(0, MAX_VERDICT_LEN)
+    text += '…' if raw.to_s.length > MAX_VERDICT_LEN
+    parts = text.split(/\s*•\s*/).map(&:strip).reject(&:empty?)
+    return "  #{text}" if parts.size <= 1
+
+    parts.map { |p| p.start_with?('•') ? "  #{p}" : "  • #{p}" }.join("\n")
+  end
+
   def format_console(symbol, data, ai_response)
     pcr = data[:call_oi].to_i.positive? ? (data[:put_oi].to_f / data[:call_oi]).round(2) : 0.0
-    verdict = (ai_response || '').to_s.strip.gsub(/\n+/, ' ').strip
-    verdict = verdict.empty? ? '— No AI verdict' : verdict.slice(0, MAX_VERDICT_LEN)
-    verdict += '…' if ai_response.to_s.length > MAX_VERDICT_LEN
+    verdict = format_verdict_block(ai_response)
     levels = data[:key_levels] || {}
 
     lines = []
@@ -69,7 +78,7 @@ module FormatDhanReport
     lines << row('', (data[:pattern_summary] || '—').to_s)
     lines << "  #{RULER}"
     lines << '  Verdict'
-    lines << "  #{verdict}"
+    lines << verdict
     lines << ''
     lines << "  #{RULER_HEAVY}"
     lines.join("\n")
@@ -77,8 +86,14 @@ module FormatDhanReport
 
   def format_telegram(symbol, data, ai_response)
     pcr = data[:call_oi].to_i.positive? ? (data[:put_oi].to_f / data[:call_oi]).round(2) : 0.0
-    verdict = (ai_response || '').to_s.strip.gsub(/\n+/, ' ').strip
-    verdict = '—' if verdict.empty?
+    raw = (ai_response || '').to_s.strip
+    verdict = if raw.empty?
+                '—'
+              else
+                raw.gsub(/\n+/, ' ').strip.split(/\s*•\s*/).map(&:strip).reject(&:empty?).map do |p|
+                  p.start_with?('•') ? p : "• #{p}"
+                end.join("\n      ")
+              end
     levels = data[:key_levels] || {}
     res = levels_str(levels[:resistance])
     sup = levels_str(levels[:support])

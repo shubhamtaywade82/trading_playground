@@ -2,6 +2,15 @@
 
 # Smart Money Concepts (SMC) from OHLC: fair value gaps (FVG) and market structure (HH/HL, LH/LL).
 # Operates on arrays: opens, highs, lows, closes (oldest first).
+#
+# Parameters (fixed in code; override by passing kwargs where supported):
+#   Swing high/low: window = 2 (2 bars each side; bar at i must be extreme in [i-2..i+2]). Min candles = 5.
+#   FVG: lookback = 10 (scan last 10 overlapping 3-candle triplets; returns last 2 bullish + last 2 bearish).
+#   Structure: min_swings = 2 (needs at least 2 swing highs and 2 swing lows for HH/HL or LH/LL).
+#
+# Where SMC is run and candle count:
+#   Dhan (generate_ai_prompt): 5m only — all 5m bars for today (today–today). Typically ~75 bars (6.25h session).
+#   Delta (generate_ai_prompt_delta, run_delta_live): 5m for summary + key_levels — DELTA_LOOKBACK_MINUTES (default 120) → 24 bars. 1h for structure_label only — DELTA_HTF_LOOKBACK_HOURS (default 24) → 24 bars.
 module SMC
   module_function
 
