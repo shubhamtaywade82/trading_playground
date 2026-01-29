@@ -11,6 +11,7 @@
 #              or AI_PROVIDER=ollama with local Ollama (OLLAMA_HOST, OLLAMA_MODEL).
 # Loop:  export LOOP_INTERVAL=300 to run every 5 minutes (errors in a cycle don't exit).
 # Mock:  MOCK_DATA=1 uses fake market data (no Dhan API); AI still runs if AI_PROVIDER set.
+# Log:   Verdict + context written to log/dhan_ai_actions.jsonl (disable with DHAN_LOG_ACTIONS=0).
 # Run:   ruby generate_ai_prompt.rb
 #
 # Env:   Loads .env from the script directory if present (via dotenv gem).
@@ -31,6 +32,7 @@ require_relative 'lib/candle_series'
 require_relative 'lib/pattern_summary'
 require_relative 'lib/ai_caller'
 require_relative 'lib/dhan/format_report'
+require_relative 'lib/dhan/action_logger'
 require_relative 'lib/telegram_notifier'
 require_relative 'lib/mock_market_data' if MOCK_MODE
 
@@ -238,6 +240,8 @@ def print_and_call_ai(symbol, ai_prompt, data)
   end
 
   puts FormatDhanReport.format_console(symbol, data, ai_response)
+
+  DhanActionLogger.log(symbol, data, ai_response)
 
   return unless ENV['TELEGRAM_CHAT_ID']
 
