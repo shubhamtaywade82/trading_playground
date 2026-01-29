@@ -22,9 +22,10 @@ These are fixed in code. `fair_value_gaps` accepts `lookback:`; `swing_highs` / 
 
 | What | Timeframe | How many candles |
 |------|-----------|-------------------|
-| SMC summary + key levels | **5m** | All 5m bars for **today** only (`from_date: today, to_date: today`). Typically **~75** bars (e.g. 6h15m session). |
+| RSI, SMA, trend, last_change | **5m** | **from_date < to_date**: last **DHAN_INTRADAY_DAYS** (default **5**) days. One request; typically ~5 × ~75 = **~375** bars (5 days × ~75 bars/day). |
+| SMC summary + key levels | **15m** | Same range (from_date to to_date). Typically ~5 × ~25 = **~125** bars (5 days × ~25 bars/day). |
 
-No 1h or other timeframe is used for SMC in the Dhan script; only 5m.
+`from_date` and `to_date` are always different: `from_date = to_date - DHAN_INTRADAY_DAYS`, `to_date = today`. SMC uses **summary_with_components** so at least one of structure (HH/HL, LH/LL), FVG, or key levels (R/S) is always present.
 
 ---
 
@@ -42,9 +43,9 @@ No 1h or other timeframe is used for SMC in the Dhan script; only 5m.
 
 ## Summary
 
-| Script | SMC on 5m | SMC on 1h | 5m candle count | 1h candle count |
-|--------|-----------|-----------|------------------|------------------|
-| **Dhan** (`generate_ai_prompt`) | Yes (summary + key levels) | No | Today’s 5m only (~75) | — |
-| **Delta** (`generate_ai_prompt_delta`, `run_delta_live`) | Yes (summary + key levels) | Yes (structure only) | 24 (120 min) | 24 (24 h) |
+| Script | SMC on 5m | SMC on 15m | SMC on 1h | 5m candles | 15m candles | 1h candles |
+|--------|-----------|------------|-----------|------------|-------------|------------|
+| **Dhan** (`generate_ai_prompt`) | No (used for RSI/SMA/trend) | Yes (summary + key levels) | No | ~375 (5 days) | ~125 (5 days) | — |
+| **Delta** (`generate_ai_prompt_delta`, `run_delta_live`) | Yes (summary + key levels) | No | Yes (structure only) | 24 (120 min) | — | 24 (24 h) |
 
-**Window:** 2 bars each side for swings. **FVG lookback:** 10 triplets.
+**Window:** 2 bars each side for swings. **FVG lookback:** 10 triplets. **Dhan:** `from_date` &lt; `to_date` (default 5 days); at least one SMC component (HH/HL, FVG, or R/S) always included.

@@ -9,7 +9,7 @@
 #   Structure: min_swings = 2 (needs at least 2 swing highs and 2 swing lows for HH/HL or LH/LL).
 #
 # Where SMC is run and candle count:
-#   Dhan (generate_ai_prompt): 5m only — all 5m bars for today (today–today). Typically ~75 bars (6.25h session).
+#   Dhan (generate_ai_prompt): 5m for RSI/SMA/trend; 15m for SMC + key levels. from_date < to_date (DHAN_INTRADAY_DAYS, default 5). ~5 days 5m + 15m in one request.
 #   Delta (generate_ai_prompt_delta, run_delta_live): 5m for summary + key_levels — DELTA_LOOKBACK_MINUTES (default 120) → 24 bars. 1h for structure_label only — DELTA_HTF_LOOKBACK_HOURS (default 24) → 24 bars.
 module SMC
   module_function
@@ -117,5 +117,29 @@ module SMC
     fvg_str = fvg_parts.any? ? fvg_parts.join('; ') : 'No recent FVG'
 
     "Structure #{struct} | #{fvg_str}"
+  end
+
+  # Summary that always includes at least one component: structure (HH/HL, LH/LL), FVG, or key levels (R/S).
+  # Key levels from swing highs/lows ensure we never return only "—" or "No recent FVG".
+  def summary_with_components(opens, highs, lows, closes, current_price)
+    return '—' if highs.nil? || highs.empty?
+
+    fvg = fair_value_gaps(highs, lows)
+    struct = structure_label(highs, lows)
+    sh = swing_highs(highs)
+    sl = swing_lows(lows)
+
+    parts = []
+    parts << "Structure #{struct}" if struct && struct.to_s != '—'
+    fvg_parts = []
+    fvg_parts << "Bullish FVG #{fvg[:bullish].last[:gap_low].round(2)}–#{fvg[:bullish].last[:gap_high].round(2)}" if fvg[:bullish].any?
+    fvg_parts << "Bearish FVG #{fvg[:bearish].last[:gap_low].round(2)}–#{fvg[:bearish].last[:gap_high].round(2)}" if fvg[:bearish].any?
+    parts << (fvg_parts.any? ? fvg_parts.join('; ') : 'No FVG')
+    res = sh.last(3).reverse.map { |x| x.round(2) }
+    sup = sl.last(3).reverse.map { |x| x.round(2) }
+    parts << "R: #{res.join(',')}" if res.any?
+    parts << "S: #{sup.join(',')}" if sup.any?
+
+    parts.any? ? parts.join(' | ') : '—'
   end
 end

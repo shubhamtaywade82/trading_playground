@@ -40,10 +40,12 @@ unless MOCK_MODE
 end
 
 # --- Config (both indices use exchange_segment 'IDX_I') ---
-EXCHANGE_SEGMENT  = 'IDX_I'
-INTRADAY_MINUTES  = 60
-SMA_PERIOD        = 20
-RSI_PERIOD        = 14
+EXCHANGE_SEGMENT   = 'IDX_I'
+INTRADAY_MINUTES   = 60
+SMA_PERIOD         = 20
+RSI_PERIOD         = 14
+# Intraday range: from_date < to_date; up to 5 days in one request (Dhan allows multi-day intraday).
+DHAN_INTRADAY_DAYS = ENV.fetch('DHAN_INTRADAY_DAYS', '5').to_i.clamp(1, 90)
 
 def underlyings
   raw = ENV.fetch('UNDERLYINGS', nil)
@@ -74,6 +76,32 @@ def sum_oi(oc, side)
     leg = row[key] || row[key.to_sym]
     (leg && (leg['oi'] || leg[:oi])).to_i
   end
+end
+
+# Option chain: we use last_price, call_oi, put_oi (PCR), ATM IV, total volume. Not yet: greeks, bid/ask, previous_*.
+def option_chain_metrics(oc, spot_price)
+  out = { call_oi: 0, put_oi: 0, atm_iv_ce: nil, atm_iv_pe: nil, total_volume: 0 }
+  return out unless oc.is_a?(Hash) && spot_price.is_a?(Numeric)
+
+  out[:call_oi] = sum_oi(oc, :call)
+  out[:put_oi]  = sum_oi(oc, :put)
+  strike_key = oc.keys.min_by { |k| ((k.to_s.to_f rescue 0) - spot_price).abs }
+  if strike_key && oc[strike_key].is_a?(Hash)
+    row = oc[strike_key]
+    ce = row['ce'] || row[:ce]
+    pe = row['pe'] || row[:pe]
+    out[:atm_iv_ce] = (ce && (ce['implied_volatility'] || ce[:implied_volatility]))&.to_f
+    out[:atm_iv_pe] = (pe && (pe['implied_volatility'] || pe[:implied_volatility]))&.to_f
+  end
+  oc.each do |_strike, row|
+    next unless row.is_a?(Hash)
+
+    %w[ce pe].each do |leg_key|
+      leg = row[leg_key] || row[leg_key.to_sym]
+      out[:total_volume] += (leg && (leg['volume'] || leg[:volume])).to_i
+    end
+  end
+  out
 end
 
 def fetch_closes(intraday_response)
@@ -119,7 +147,13 @@ def key_levels_from_smc(highs, lows)
   { resistance: sh.last(3).reverse, support: sl.last(3).reverse }
 end
 
-def dhan_pattern_summary(inst, today, ohlc_5m, _symbol)
+def dhan_intraday_range
+  to_date = Date.today
+  from_date = to_date - DHAN_INTRADAY_DAYS
+  [from_date.to_s, to_date.to_s]
+end
+
+def dhan_pattern_summary(inst, from_date, to_date, ohlc_5m, _symbol)
   candles_5m = CandleSeries.from_ohlcv_arrays(
     opens: ohlc_5m[:opens], highs: ohlc_5m[:highs], lows: ohlc_5m[:lows], closes: ohlc_5m[:closes]
   )
@@ -129,7 +163,7 @@ def dhan_pattern_summary(inst, today, ohlc_5m, _symbol)
   candles_15m = []
   candles_1m  = []
   [['60', candles_60m], ['15', candles_15m], ['1', candles_1m]].each do |interval, store|
-    raw = inst.intraday(from_date: today, to_date: today, interval: interval)
+    raw = inst.intraday(from_date: from_date, to_date: to_date, interval: interval)
     arr = fetch_ohlc_arrays(raw)
     next if arr[:closes].size < 5
 
@@ -174,7 +208,9 @@ def build_ai_prompt(symbol, data)
   sup = format_levels(levels[:support])
 
   lines = []
-  lines << "#{symbol} options (PCR trend reversal, intraday). Data: Spot #{format_num(data[:spot_price])} | PCR #{format_num(pcr)} | RSI #{format_num(data[:rsi_14])} | Trend #{data[:trend]} | Chg #{data[:last_change]}%."
+  iv_str = [data[:atm_iv_ce], data[:atm_iv_pe]].any? ? " | ATM IV CE #{format_num(data[:atm_iv_ce])} / PE #{format_num(data[:atm_iv_pe])}" : ''
+  vol_str = data[:total_volume].to_i.positive? ? " | OC Vol #{data[:total_volume]}" : ''
+  lines << "#{symbol} options (PCR trend reversal, intraday). Data: Spot #{format_num(data[:spot_price])} | PCR #{format_num(pcr)} | RSI #{format_num(data[:rsi_14])} | Trend #{data[:trend]} | Chg #{data[:last_change]}%.#{iv_str}#{vol_str}"
   lines << "Key levels — Resistance: #{res} | Support: #{sup}"
   lines << "SMC: #{data[:smc_summary] || '—'}"
   lines << (data[:pattern_summary] || 'Pattern: None')
@@ -233,43 +269,46 @@ def run_cycle_for(symbol)
                    .min
                    &.to_s
 
-  call_oi = 0
-  put_oi  = 0
+  oc_metrics = { call_oi: 0, put_oi: 0, atm_iv_ce: nil, atm_iv_pe: nil, total_volume: 0 }
   if nearest_expiry
     chain = inst.option_chain(expiry: nearest_expiry)
     last_price_from_chain, oc, = extract_oc_and_last_price(chain)
     spot_price = last_price_from_chain.to_f if last_price_from_chain && spot_price.zero?
-    if oc.is_a?(Hash)
-      call_oi = sum_oi(oc, :call)
-      put_oi  = sum_oi(oc, :put)
-    end
+    oc_metrics = option_chain_metrics(oc, spot_price) if oc.is_a?(Hash)
   end
 
-  today = Date.today.to_s
-  intraday = inst.intraday(from_date: today, to_date: today, interval: '5')
-  ohlc = fetch_ohlc_arrays(intraday)
-  closes = ohlc[:closes]
+  from_date, to_date = dhan_intraday_range
+  intraday_5m  = inst.intraday(from_date: from_date, to_date: to_date, interval: '5')
+  intraday_15m = inst.intraday(from_date: from_date, to_date: to_date, interval: '15')
+  ohlc_5m  = fetch_ohlc_arrays(intraday_5m)
+  ohlc_15m = fetch_ohlc_arrays(intraday_15m)
+  closes_5m = ohlc_5m[:closes]
 
-  sma_20 = TechnicalIndicators.sma(closes, SMA_PERIOD)
-  rsi_14 = TechnicalIndicators.rsi(closes, RSI_PERIOD)
+  sma_20 = TechnicalIndicators.sma(closes_5m, SMA_PERIOD)
+  rsi_14 = TechnicalIndicators.rsi(closes_5m, RSI_PERIOD)
   trend  = trend_label(spot_price, sma_20)
 
-  last_change = if closes.size >= 2 && closes[-2].nonzero?
-                  ((closes.last - closes[-2]) / closes[-2] * 100).round(2)
+  last_change = if closes_5m.size >= 2 && closes_5m[-2].nonzero?
+                  ((closes_5m.last - closes_5m[-2]) / closes_5m[-2] * 100).round(2)
                 else
                   'N/A'
                 end
 
-  smc_summary = SMC.summary(ohlc[:opens], ohlc[:highs], ohlc[:lows], closes, spot_price)
-  key_levels  = key_levels_from_smc(ohlc[:highs], ohlc[:lows])
+  smc_summary = SMC.summary_with_components(
+    ohlc_15m[:opens], ohlc_15m[:highs], ohlc_15m[:lows], ohlc_15m[:closes], spot_price
+  )
+  key_levels = key_levels_from_smc(ohlc_15m[:highs], ohlc_15m[:lows])
 
-  pattern_summary = dhan_pattern_summary(inst, today, ohlc, symbol)
+  pattern_summary = dhan_pattern_summary(inst, from_date, to_date, ohlc_5m, symbol)
   data = {
     spot_price: spot_price,
     current_ohlc_str: current_ohlc_str,
     nearest_expiry: nearest_expiry,
-    call_oi: call_oi,
-    put_oi: put_oi,
+    call_oi: oc_metrics[:call_oi],
+    put_oi: oc_metrics[:put_oi],
+    atm_iv_ce: oc_metrics[:atm_iv_ce],
+    atm_iv_pe: oc_metrics[:atm_iv_pe],
+    total_volume: oc_metrics[:total_volume],
     sma_20: sma_20,
     rsi_14: rsi_14,
     trend: trend,

@@ -42,7 +42,7 @@ module Delta
         trend = trend_label(mark_price, sma_20)
         key_levels = Delta::Analysis.key_levels(highs, lows)
         funding_regime = Delta::Analysis.funding_regime(funding_rate)
-        smc_summary = SMC.summary(opens, highs, lows, closes, mark_price)
+        smc_summary = SMC.summary_with_components(opens, highs, lows, closes, mark_price)
 
         sma_1h = TechnicalIndicators.sma(closes_1h, SMA_PERIOD)
         last_close_1h = closes_1h.last

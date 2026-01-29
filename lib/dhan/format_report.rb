@@ -60,6 +60,9 @@ module FormatDhanReport
     lines << row('Nearest expiry', (data[:nearest_expiry] || '—').to_s)
     lines << row('Call OI', data[:call_oi].to_s)
     lines << row('Put OI', data[:put_oi].to_s)
+    lines << row('ATM IV CE', num(data[:atm_iv_ce]))
+    lines << row('ATM IV PE', num(data[:atm_iv_pe]))
+    lines << row('OC Vol', (data[:total_volume].to_i.positive? ? data[:total_volume].to_s : '—'))
     lines << row('Chg %', (data[:last_change].nil? ? '—' : "#{data[:last_change]}%"))
     lines << "  #{RULER}"
     lines << '  Key levels'
@@ -98,9 +101,11 @@ module FormatDhanReport
     res = levels_str(levels[:resistance])
     sup = levels_str(levels[:support])
 
+    iv_tg = [data[:atm_iv_ce], data[:atm_iv_pe]].any? ? " · IV #{num(data[:atm_iv_ce])}/#{num(data[:atm_iv_pe])}" : ''
+    vol_tg = data[:total_volume].to_i.positive? ? " · Vol #{data[:total_volume]}" : ''
     <<~MSG
       #{symbol} Options · Dhan
-      Spot #{num(data[:spot_price])} · PCR #{num(pcr)} · RSI #{num(data[:rsi_14])} · #{data[:trend]} · Chg #{data[:last_change]}%
+      Spot #{num(data[:spot_price])} · PCR #{num(pcr)} · RSI #{num(data[:rsi_14])} · #{data[:trend]} · Chg #{data[:last_change]}%#{iv_tg}#{vol_tg}
       R:#{res} S:#{sup}
       SMC: #{data[:smc_summary] || '—'}
 
