@@ -16,6 +16,9 @@ require_relative 'lib/delta/client'
 require_relative 'lib/delta/format_report'
 require_relative 'lib/delta/action_logger'
 require_relative 'lib/delta/analysis'
+require_relative 'lib/candle'
+require_relative 'lib/candle_series'
+require_relative 'lib/pattern_summary'
 require_relative 'lib/technical_indicators'
 require_relative 'lib/smc'
 require_relative 'lib/ai_caller'
@@ -52,6 +55,50 @@ def format_levels(arr)
   arr.is_a?(Array) && arr.any? ? arr.map { |x| format_num(x) }.join(', ') : '—'
 end
 
+def delta_candle_list_to_candles(list)
+  return [] unless list.is_a?(Array) && list.any?
+
+  list.filter_map do |c|
+    close = (c['close'] || c[:close])&.to_f
+    next unless close
+
+    Candle.new(
+      timestamp: c['time'] || c['timestamp'] || c[:time] || c[:timestamp],
+      open: (c['open'] || c[:open]).to_f,
+      high: (c['high'] || c[:high]).to_f,
+      low: (c['low'] || c[:low]).to_f,
+      close: close,
+      volume: (c['volume'] || c[:volume] || 0).to_f
+    )
+  end
+end
+
+def delta_pattern_summary(client, symbol, end_ts, candle_list, list_1h)
+  start_ts = end_ts - (INTRADAY_MINUTES * 60)
+  start_ts_1h = end_ts - (HTF_LOOKBACK_HOURS * 3600)
+  candles_5m  = delta_candle_list_to_candles(candle_list)
+  candles_60m = delta_candle_list_to_candles(list_1h)
+  return 'Pattern: None' if candles_5m.size < 5
+
+  candles_15m = delta_candle_list_to_candles(
+    (client.candles(symbol: symbol, resolution: '15m', start_ts: start_ts, end_ts: end_ts).dig('result') || [])
+  )
+  candles_1m = delta_candle_list_to_candles(
+    (client.candles(symbol: symbol, resolution: '1m', start_ts: start_ts, end_ts: end_ts).dig('result') || [])
+  )
+  context = {
+    candles_60m: candles_60m,
+    candles_15m: candles_15m,
+    candles_5m: candles_5m,
+    candles_1m: candles_1m,
+    support_level: nil,
+    resistance_level: nil
+  }
+  PatternSummary.call(context)
+rescue StandardError
+  'Pattern: None'
+end
+
 def build_ai_prompt_delta(symbol, data)
   funding_pct = (data[:funding_rate].to_f * 100).round(4)
   levels = data[:key_levels] || {}
@@ -72,6 +119,7 @@ def build_ai_prompt_delta(symbol, data)
   sections << "Volatility: ATR #{format_num(data[:atr])} (#{atr_pct}% of price)" if atr_pct
   sections << "Orderbook: bid share #{ob[:imbalance_ratio]}" if ob && ob[:imbalance_ratio]
   sections << "SMC: #{data[:smc_summary] || '—'}"
+  sections << (data[:pattern_summary] || 'Pattern: None')
 
   prompt = sections.join("\n")
   prompt += "\n\nReply in 2–4 lines. Format:\n• Bias: Long | Short | No trade\n• Reason: (one short line)\n• Action: (optional: level or wait)"
@@ -148,6 +196,7 @@ def run_cycle_for(symbol)
   smc_summary = SMC.summary(opens, highs, lows, closes, mark_price)
   key_levels = Delta::Analysis.key_levels(highs, lows)
   funding_regime = Delta::Analysis.funding_regime(funding_rate)
+  pattern_summary = delta_pattern_summary(client, symbol, end_ts, candle_list, list_1h)
 
   data = {
     mark_price: mark_price,
@@ -165,7 +214,8 @@ def run_cycle_for(symbol)
     atr_pct: atr_ctx[:atr_pct],
     htf_trend: htf_trend,
     htf_structure: htf_structure,
-    orderbook_imbalance: orderbook_imbalance
+    orderbook_imbalance: orderbook_imbalance,
+    pattern_summary: pattern_summary
   }
   prompt = build_ai_prompt_delta(symbol, data)
   print_and_call_ai(symbol, prompt, data)

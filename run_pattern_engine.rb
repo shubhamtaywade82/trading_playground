@@ -44,38 +44,67 @@ require_relative 'lib/engine/pattern_signal'
 require_relative 'lib/engine/pattern_engine'
 require_relative 'lib/engine/execution_pipeline'
 
-symbol = ENV.fetch('PATTERN_SYMBOL', 'index')
+# Multi-symbol: Dhan use PATTERN_SYMBOLS=NIFTY,SENSEX PATTERN_SECURITY_IDS=13,51; Delta use PATTERN_SYMBOLS=BTCUSD,ETHUSD
+def symbol_pairs
+  source = ENV['CANDLE_SOURCE']&.strip&.downcase
+  symbols_str = ENV['PATTERN_SYMBOLS']&.strip
+  ids_str = ENV['PATTERN_SECURITY_IDS']&.strip
 
-candles_60m = CandleSeries.load(symbol, :m60)
-candles_15m = CandleSeries.load(symbol, :m15)
-candles_5m  = CandleSeries.load(symbol, :m5)
-candles_1m  = CandleSeries.load(symbol, :m1)
+  if source == 'dhan' && symbols_str && ids_str
+    symbols = symbols_str.split(',').map(&:strip).reject(&:empty?)
+    ids = ids_str.split(',').map(&:strip).reject(&:empty?)
+    return symbols.zip(ids).reject { |s, i| s.nil? || s.empty? || i.nil? || i.empty? } if symbols.size == ids.size
+  end
 
-if candles_60m.empty? || candles_15m.empty? || candles_5m.empty?
-  puts "No candle data. Add CSV under data/candles/#{symbol}_1m.csv, _5m.csv, _15m.csv, _60m.csv"
-  puts "Or use API (set env vars before the command):"
-  puts "  Delta: CANDLE_SOURCE=delta PATTERN_SYMBOL=BTCUSD ruby run_pattern_engine.rb"
-  puts "  Dhan:  CANDLE_SOURCE=dhan PATTERN_SECURITY_ID=<id> ruby run_pattern_engine.rb"
-  puts "         For NIFTY/SENSEX index also set: PATTERN_EXCHANGE_SEGMENT=IDX_I PATTERN_INSTRUMENT=INDEX"
-  puts "         Get security_id from Dhan instrument master. Requires DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN."
-  exit 0
+  if symbols_str
+    symbols = symbols_str.split(',').map(&:strip).reject(&:empty?)
+    return symbols.map { |s| [s, nil] } if symbols.any?
+  end
+
+  single = ENV.fetch('PATTERN_SYMBOL', 'index')
+  [[single, ENV['PATTERN_SECURITY_ID']&.strip]]
 end
 
-context = {
-  candles_60m: candles_60m,
-  candles_15m: candles_15m,
-  candles_5m: candles_5m,
-  candles_1m: candles_1m,
-  iv_percentile: ENV['IV_PERCENTILE']&.to_f,
-  dte: ENV['DTE']&.to_i,
-  support_level: ENV['SUPPORT_LEVEL']&.to_f,
-  resistance_level: ENV['RESISTANCE_LEVEL']&.to_f
-}
+def run_for_symbol(symbol, security_id)
+  ENV['PATTERN_SECURITY_ID'] = security_id if security_id
+  candles_60m = CandleSeries.load(symbol, :m60)
+  candles_15m = CandleSeries.load(symbol, :m15)
+  candles_5m  = CandleSeries.load(symbol, :m5)
+  candles_1m  = CandleSeries.load(symbol, :m1)
 
-result = ExecutionPipeline.call(context)
+  return false if candles_60m.empty? || candles_15m.empty? || candles_5m.empty?
 
-if result
-  puts "Signal: #{result[:direction]} | pattern: #{result[:pattern]} | SL: #{result[:sl]} | TP: #{result[:tp]}"
-else
-  puts "No trade: volatility filter, trend/pattern mismatch, or no valid pattern."
+  context = {
+    candles_60m: candles_60m,
+    candles_15m: candles_15m,
+    candles_5m: candles_5m,
+    candles_1m: candles_1m,
+    iv_percentile: ENV['IV_PERCENTILE']&.to_f,
+    dte: ENV['DTE']&.to_i,
+    support_level: ENV['SUPPORT_LEVEL']&.to_f,
+    resistance_level: ENV['RESISTANCE_LEVEL']&.to_f
+  }
+  result = ExecutionPipeline.call(context)
+  if result
+    puts "  #{symbol}: Signal #{result[:direction]} | pattern #{result[:pattern]} | SL: #{result[:sl]} | TP: #{result[:tp]}"
+  else
+    puts "  #{symbol}: No trade (volatility filter, trend/pattern mismatch, or no valid pattern)."
+  end
+  true
+end
+
+pairs = symbol_pairs
+any_loaded = false
+pairs.each do |symbol, security_id|
+  any_loaded = true if run_for_symbol(symbol, security_id)
+end
+
+unless any_loaded
+  symbol = pairs.first&.first || 'index'
+  puts "No candle data. Add CSV under data/candles/#{symbol}_1m.csv, _5m.csv, _15m.csv, _60m.csv"
+  puts "Or use API (set env vars before the command):"
+  puts "  Delta (multi): CANDLE_SOURCE=delta PATTERN_SYMBOLS=BTCUSD,ETHUSD ruby run_pattern_engine.rb"
+  puts "  Dhan (NIFTY+SENSEX): CANDLE_SOURCE=dhan PATTERN_SYMBOLS=NIFTY,SENSEX PATTERN_SECURITY_IDS=13,51 ruby run_pattern_engine.rb"
+  puts "         Also set: PATTERN_EXCHANGE_SEGMENT=IDX_I PATTERN_INSTRUMENT=INDEX. Requires DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN."
+  exit 0
 end

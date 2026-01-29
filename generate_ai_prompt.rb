@@ -26,6 +26,9 @@ ENV['ACCESS_TOKEN'] ||= ENV.fetch('DHAN_ACCESS_TOKEN', nil)
 require 'date'
 require_relative 'lib/technical_indicators'
 require_relative 'lib/smc'
+require_relative 'lib/candle'
+require_relative 'lib/candle_series'
+require_relative 'lib/pattern_summary'
 require_relative 'lib/ai_caller'
 require_relative 'lib/dhan/format_report'
 require_relative 'lib/telegram_notifier'
@@ -116,6 +119,38 @@ def key_levels_from_smc(highs, lows)
   { resistance: sh.last(3).reverse, support: sl.last(3).reverse }
 end
 
+def dhan_pattern_summary(inst, today, ohlc_5m, _symbol)
+  candles_5m = CandleSeries.from_ohlcv_arrays(
+    opens: ohlc_5m[:opens], highs: ohlc_5m[:highs], lows: ohlc_5m[:lows], closes: ohlc_5m[:closes]
+  )
+  return 'Pattern: None' if candles_5m.size < 5
+
+  candles_60m = []
+  candles_15m = []
+  candles_1m  = []
+  [['60', candles_60m], ['15', candles_15m], ['1', candles_1m]].each do |interval, store|
+    raw = inst.intraday(from_date: today, to_date: today, interval: interval)
+    arr = fetch_ohlc_arrays(raw)
+    next if arr[:closes].size < 5
+
+    store.concat(CandleSeries.from_ohlcv_arrays(
+      opens: arr[:opens], highs: arr[:highs], lows: arr[:lows], closes: arr[:closes]
+    ))
+  end
+
+  context = {
+    candles_60m: candles_60m,
+    candles_15m: candles_15m,
+    candles_5m: candles_5m,
+    candles_1m: candles_1m,
+    support_level: nil,
+    resistance_level: nil
+  }
+  PatternSummary.call(context)
+rescue StandardError
+  'Pattern: None'
+end
+
 def trend_label(spot, sma)
   return 'Neutral' if sma.nil?
   return 'Bullish (above SMA)' if spot > sma
@@ -142,6 +177,7 @@ def build_ai_prompt(symbol, data)
   lines << "#{symbol} options (PCR trend reversal, intraday). Data: Spot #{format_num(data[:spot_price])} | PCR #{format_num(pcr)} | RSI #{format_num(data[:rsi_14])} | Trend #{data[:trend]} | Chg #{data[:last_change]}%."
   lines << "Key levels — Resistance: #{res} | Support: #{sup}"
   lines << "SMC: #{data[:smc_summary] || '—'}"
+  lines << (data[:pattern_summary] || 'Pattern: None')
   lines << ""
   lines << "Reply in 2–4 lines only. Format:"
   lines << "• Bias: CE | PE | No trade"
@@ -227,6 +263,7 @@ def run_cycle_for(symbol)
   smc_summary = SMC.summary(ohlc[:opens], ohlc[:highs], ohlc[:lows], closes, spot_price)
   key_levels  = key_levels_from_smc(ohlc[:highs], ohlc[:lows])
 
+  pattern_summary = dhan_pattern_summary(inst, today, ohlc, symbol)
   data = {
     spot_price: spot_price,
     current_ohlc_str: current_ohlc_str,
@@ -238,7 +275,8 @@ def run_cycle_for(symbol)
     trend: trend,
     last_change: last_change,
     smc_summary: smc_summary,
-    key_levels: key_levels
+    key_levels: key_levels,
+    pattern_summary: pattern_summary
   }
   print_and_call_ai(symbol, build_ai_prompt(symbol, data), data)
 end

@@ -65,6 +65,9 @@ module FormatDhanReport
     lines << '  SMC'
     lines << row('', (data[:smc_summary] || '—').to_s)
     lines << "  #{RULER}"
+    lines << '  Chart pattern'
+    lines << row('', (data[:pattern_summary] || '—').to_s)
+    lines << "  #{RULER}"
     lines << '  Verdict'
     lines << "  #{verdict}"
     lines << ''

@@ -40,6 +40,8 @@ Full rules and assumptions: [docs/pcr_trend_reversal_strategy.md](docs/pcr_trend
 
 **Underlyings:** By default both NIFTY and SENSEX are analyzed per cycle. Override: `UNDERLYINGS=NIFTY,SENSEX` or `UNDERLYING=NIFTY` for a single index.
 
+**Live trading usage (Dhan options vs Delta crypto):** See [docs/live_trading_usage.md](docs/live_trading_usage.md) for how to best use the repo for Dhan options buying (signals only; orders manual) and Delta crypto perpetuals (full pipeline + optional automated execution).
+
 ## Delta Exchange (crypto derivatives)
 
 [Delta Exchange](https://docs.delta.exchange) is supported for crypto perpetuals (BTC, ETH, etc.) with **market data**, **AI analysis**, and **trading**.
