@@ -4,6 +4,7 @@ source 'https://rubygems.org'
 
 gem 'DhanHQ', git: 'https://github.com/shubhamtaywade82/dhanhq-client.git', branch: 'main'
 gem 'dotenv'
+gem 'rest-client'
 gem 'ollama-client'
 gem 'openai'
 gem 'rubocop', group: :development

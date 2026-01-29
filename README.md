@@ -26,7 +26,7 @@ Full rules and assumptions: [docs/pcr_trend_reversal_strategy.md](docs/pcr_trend
 
 **Optional – get AI analysis in the same run:**
 
-- **OpenAI:** `AI_PROVIDER=openai OPENAI_API_KEY=sk-... ruby generate_ai_prompt.rb`  
+- **OpenAI:** `AI_PROVIDER=openai OPENAI_API_KEY=sk-... ruby generate_ai_prompt.rb`
   Optional: `OPENAI_MODEL=gpt-4o` (default), `AI_MODEL=gpt-4o-mini`, etc.
 - **Ollama (local):** `AI_PROVIDER=ollama ruby generate_ai_prompt.rb` — uses [ollama-client](https://github.com/shubhamtaywade82/ollama-client) gem (`/api/generate`, plain text). Optional: `OLLAMA_HOST`, `OLLAMA_MODEL`, `OLLAMA_TIMEOUT`.
 
@@ -40,6 +40,31 @@ Full rules and assumptions: [docs/pcr_trend_reversal_strategy.md](docs/pcr_trend
 
 **Underlyings:** By default both NIFTY and SENSEX are analyzed per cycle. Override: `UNDERLYINGS=NIFTY,SENSEX` or `UNDERLYING=NIFTY` for a single index.
 
+## Delta Exchange (crypto derivatives)
+
+[Delta Exchange](https://docs.delta.exchange) is supported for crypto perpetuals (BTC, ETH, etc.) with **market data**, **AI analysis**, and **trading**.
+
+**AI analysis (same flow as NIFTY):**
+`ruby generate_ai_prompt_delta.rb` — fetches Delta ticker + 5m candles for BTCUSD/ETHUSD (or `DELTA_SYMBOLS`), computes SMA/RSI/trend, builds a prompt, and calls OpenAI/Ollama. Optional: `AI_PROVIDER=ollama`, `LOOP_INTERVAL=300`, `TELEGRAM_CHAT_ID`. No Delta credentials needed for market data.
+
+**Trading (place/cancel orders):**
+Set `DELTA_API_KEY` and `DELTA_API_SECRET` in `.env`. Use the Ruby client:
+
+```ruby
+require_relative 'lib/delta_exchange_client'
+client = DeltaExchangeClient.new
+# Public (no auth)
+client.ticker('BTCUSD')
+client.candles(symbol: 'BTCUSD', resolution: '5m', start_ts: Time.now.to_i - 3600, end_ts: Time.now.to_i)
+# Auth: wallet, orders, place_order, cancel_order
+client.wallet_balances
+client.orders(states: 'open')
+client.place_order(product_symbol: 'BTCUSD', size: 1, side: 'buy', order_type: 'limit_order', limit_price: '85000')
+client.cancel_order(id: 12345, product_id: 27)
+```
+
+**Python:** `pip install delta-rest-client` (see `requirements.txt`). Run `python3 delta_example.py`.
+
 ## Requirements
 
-Ruby 3.x. Scripts use the DhanHQ gem for market data.
+Ruby 3.x. Scripts use the DhanHQ gem for market data. Delta: Ruby `rest-client` gem, or Python `delta-rest-client` (optional).
