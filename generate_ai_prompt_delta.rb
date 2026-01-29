@@ -15,12 +15,13 @@ Dotenv.load(File.expand_path('.env', __dir__))
 require_relative 'lib/delta_exchange_client'
 require_relative 'lib/technical_indicators'
 require_relative 'lib/smc'
+require_relative 'lib/format_delta_report'
 require_relative 'lib/ai_caller'
 require_relative 'lib/telegram_notifier'
 
-# Timeframe: candle resolution (Delta: 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 1d, 1w) and lookback in minutes
+# Timeframe: candle resolution and lookback in minutes. Need enough candles for SMA(20) and RSI(14): e.g. 5m + 120 min = 24 candles.
 DELTA_RESOLUTION = ENV.fetch('DELTA_RESOLUTION', '5m')
-INTRADAY_MINUTES = ENV.fetch('DELTA_LOOKBACK_MINUTES', '60').to_i
+INTRADAY_MINUTES = ENV.fetch('DELTA_LOOKBACK_MINUTES', '120').to_i
 SMA_PERIOD       = 20
 RSI_PERIOD       = 14
 
@@ -46,25 +47,17 @@ def build_ai_prompt_delta(symbol, data)
   funding_pct = (data[:funding_rate].to_f * 100).round(4)
   smc_line = data[:smc_summary] || '—'
   <<~PROMPT
-    #{symbol} perpetual (futures) on Delta Exchange — analyse for trading the perpetual, not spot. Data: Mark #{format_num(data[:mark_price])} | Index #{format_num(data[:spot_price])} (ref) | Funding #{funding_pct}% | OI #{data[:oi]} | RSI #{format_num(data[:rsi_14])} | Trend #{data[:trend]} | Chg 24h #{data[:mark_change_24h]}%. SMC: #{smc_line}.
+    #{symbol} perpetual (futures) on Delta Exchange — analyse for trading the perpetual, not spot.
+
+    Market:   Mark #{format_num(data[:mark_price])} | Index #{format_num(data[:spot_price])} (ref) | Funding #{funding_pct}% | OI #{data[:oi]} | Chg 24h #{data[:mark_change_24h]}%
+    Indicators: RSI #{format_num(data[:rsi_14])} | SMA(20) #{format_num(data[:sma_20])} | Trend #{data[:trend]}
+    SMC: #{smc_line}
 
     Reply in 2–4 lines only. Format:
     • Bias: Long | Short | No trade
     • Reason: (one short line)
     • Action: (optional: level or wait)
   PROMPT
-end
-
-MAX_VERDICT_LEN = 280
-
-def format_summary_delta(symbol, data, ai_response)
-  funding_pct = (data[:funding_rate].to_f * 100).round(4)
-  smc = data[:smc_summary].to_s.slice(0, 50)
-  line1 = "#{symbol} perp  Mark #{format_num(data[:mark_price])}  Index #{format_num(data[:spot_price])}  Funding #{funding_pct}%  RSI #{format_num(data[:rsi_14])}  #{data[:trend]}  SMC #{smc}"
-  verdict = ai_response.to_s.strip.gsub(/\n+/, ' ').strip
-  verdict = verdict.empty? ? '—' : verdict.slice(0, MAX_VERDICT_LEN)
-  verdict += '…' if ai_response.to_s.length > MAX_VERDICT_LEN
-  "#{line1}\n→ #{verdict}"
 end
 
 def print_and_call_ai(symbol, ai_prompt, data)
@@ -74,13 +67,12 @@ def print_and_call_ai(symbol, ai_prompt, data)
     ai_response = AiCaller.call(ai_prompt, provider: ai_provider, model: ENV.fetch('AI_MODEL', nil))
   end
 
-  summary = format_summary_delta(symbol, data, ai_response)
-  puts "\n#{summary}"
+  puts FormatDeltaReport.format_console(symbol, data, ai_response)
 
   return unless ENV['TELEGRAM_CHAT_ID']
 
   begin
-    TelegramNotifier.send_message(summary)
+    TelegramNotifier.send_message(FormatDeltaReport.format_telegram(symbol, data, ai_response))
   rescue StandardError => e
     warn "Telegram send failed: #{e.message}"
   end
@@ -130,13 +122,15 @@ def run_cycle_for(symbol)
 end
 
 def run_cycle
-  puts "Timestamp: #{Time.now.strftime('%Y-%m-%d %H:%M:%S')} (Delta Exchange)"
+  puts "\n  ═════════════════════════════════════════════"
+  puts "  Delta Exchange · #{Time.now.strftime('%Y-%m-%d %H:%M:%S')}"
+  puts '  ═════════════════════════════════════════════'
   delta_symbols.each do |symbol|
     run_cycle_for(symbol)
   rescue StandardError => e
     warn "Error for #{symbol}: #{e.message}"
   end
-  puts "\n--- End of Cycle ---\n"
+  puts "\n  End of cycle\n\n"
 end
 
 loop_interval = ENV['LOOP_INTERVAL']&.strip&.to_i
