@@ -38,7 +38,10 @@ module Delta
       def place_or_skip(symbol, verdict, risk, context)
         correlation_id = "delta_#{symbol}_#{Time.now.to_i}_#{rand(1000)}"
         size = position_size_contracts(context, risk)
-        return log_intent_only(symbol, verdict, risk, context, reason: 'Size zero or negative') if size.nil? || size <= 0
+        if size.nil? || size <= 0
+          reason = ENV['DELTA_MAX_POSITION_USD'].to_s.strip.empty? ? 'Set DELTA_MAX_POSITION_USD for live sizing' : 'Size zero or negative'
+          return log_intent_only(symbol, verdict, risk, context, reason: reason)
+        end
 
         side = verdict[:bias].to_s.strip.downcase == 'long' ? 'buy' : 'sell'
         limit_price = limit_from_mark(context[:mark_price], side)

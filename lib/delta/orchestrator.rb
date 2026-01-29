@@ -55,6 +55,7 @@ module Delta
       ai_response = verdict[:raw].to_s
       puts FormatDeltaReport.format_console(symbol, context, ai_response)
       append_verdict_to_console(verdict, risk, exec_result)
+      puts "  Pipeline: MarketData → Analysis → Thinking → Risk → Execution"
       DeltaActionLogger.log(symbol, context, ai_response)
       send_telegram_if_configured(symbol, context, ai_response)
     end

@@ -25,3 +25,29 @@ Delta-specific code lives under `lib/delta/` so it stays separate from DhanHQ an
 | `orchestrator.rb` | Runs pipeline for configured symbols; dry-run by default.                                  |
 
 Flow: **MarketData** → **Analysis** (SMC, indicators, HTF) → **Thinking** (Ollama verdict) → **Risk** (size, SL, TP) → **Execution** (optional live orders). Scripts: `run_delta_live.rb` (recommended), `generate_ai_prompt_delta.rb`, `verify_delta_actions.rb`. Shared libs in `lib/`.
+
+## Env: dry-run vs live
+
+**Dry-run (no orders, only analysis + AI verdict):**
+
+In `.env` (or leave unset):
+
+```env
+LIVE_TRADING=0
+```
+
+Or omit `LIVE_TRADING`. You’ll see: `Execution: skipped — LIVE_TRADING not set`.
+
+**Live trading (real orders):**
+
+In `.env`:
+
+```env
+LIVE_TRADING=1
+DELTA_MAX_POSITION_USD=500
+DELTA_API_KEY=your_api_key
+DELTA_API_SECRET=your_api_secret
+```
+
+- `DELTA_MAX_POSITION_USD` = max notional per trade (USD). Required for sizing; without it you get `Execution: skipped — Set DELTA_MAX_POSITION_USD for live sizing` or `Size zero or negative`.
+- Get API key/secret from [Delta Exchange](https://www.delta.exchange) (API section).
