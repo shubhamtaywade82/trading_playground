@@ -62,25 +62,55 @@ def current_marks(symbols)
   symbols.to_h { |s| [s, client.ticker(s).dig('result', 'mark_price')&.to_f] }
 end
 
+def format_level(level)
+  level.is_a?(Numeric) ? level.round(2) : level
+end
+
 def verify_one(entry, mark_now)
   mark_then = entry['mark_price']&.to_f
   levels = Array(entry['levels'])
+  key_levels = entry['key_levels']
+  atr = entry['atr']
+  atr_pct = entry['atr_pct']
   bias = entry['bias']
   lines = []
   lines << "  At:    #{entry['at']}"
   lines << "  Symbol: #{entry['symbol']}  Mark then: #{mark_then}  Mark now: #{mark_now || '—'}"
+  if atr || atr_pct
+    vol = [atr && "ATR #{format_level(atr)}", atr_pct && "#{format_level(atr_pct)}%"].compact.join(' ')
+    lines << "  Volatility (then): #{vol}"
+  end
   lines << "  Bias:  #{bias || '—'}"
   lines << "  Reason: #{entry['reason'] || '—'}"
   lines << "  Action: #{entry['action'] || '—'}"
+
+  if key_levels.is_a?(Hash) && mark_now
+    res = Array(key_levels['resistance'] || key_levels[:resistance])
+    sup = Array(key_levels['support'] || key_levels[:support])
+    if res.any? || sup.any?
+      lines << '  Key levels (SMC):'
+      res.each do |level|
+        l = level.to_f
+        status = mark_now >= l ? '✓ broke above' : '— below'
+        lines << "    R #{format_level(l)} → now #{mark_now.round(2)} #{status}"
+      end
+      sup.each do |level|
+        l = level.to_f
+        status = mark_now <= l ? '✓ broke below' : '— above'
+        lines << "    S #{format_level(l)} → now #{mark_now.round(2)} #{status}"
+      end
+    end
+  end
+
   if levels.any? && mark_now
-    lines << '  Levels:'
+    lines << '  Action levels:'
     levels.each do |level|
       above = mark_now >= level
       status = above ? '✓ price above' : '✗ price below'
-      lines << "    #{level} → now #{mark_now.round(2)} #{status}"
+      lines << "    #{format_level(level)} → now #{mark_now.round(2)} #{status}"
     end
   elsif levels.any?
-    lines << "  Levels: #{levels.join(', ')} (no current price)"
+    lines << "  Action levels: #{levels.map { |l| format_level(l) }.join(', ')} (no current price)"
   end
   lines.join("\n")
 end
@@ -118,7 +148,7 @@ def run(opts)
   if ai_provider && %w[openai ollama].include?(ai_provider)
     report_text = report_lines.join("\n\n")
     prompt = <<~PROMPT
-      Below is a verification report of Delta Exchange AI suggestions (suggested bias/action/levels vs current price). Summarise in 3–5 short lines: which suggested levels were hit (price above/below), which were not, and one takeaway (e.g. how many calls were right so far).
+      Below is a verification report of Delta Exchange AI suggestions: bias/action, suggested levels, and (when present) key SMC levels (resistance R / support S) and volatility (ATR) at log time. For each entry we compare current price to those levels (broke above/below). Summarise in 3–5 short lines: which levels were hit, which were not, and one takeaway (e.g. how many calls were right so far).
 
       Report:
       #{report_text}

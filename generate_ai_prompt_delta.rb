@@ -15,16 +15,20 @@ Dotenv.load(File.expand_path('.env', __dir__))
 require_relative 'lib/delta/client'
 require_relative 'lib/delta/format_report'
 require_relative 'lib/delta/action_logger'
+require_relative 'lib/delta/analysis'
 require_relative 'lib/technical_indicators'
 require_relative 'lib/smc'
 require_relative 'lib/ai_caller'
 require_relative 'lib/telegram_notifier'
 
-# Timeframe: candle resolution and lookback in minutes. Need enough candles for SMA(20) and RSI(14): e.g. 5m + 120 min = 24 candles.
-DELTA_RESOLUTION = ENV.fetch('DELTA_RESOLUTION', '5m')
-INTRADAY_MINUTES = ENV.fetch('DELTA_LOOKBACK_MINUTES', '120').to_i
-SMA_PERIOD       = 20
-RSI_PERIOD       = 14
+# Timeframe: 5m for LT and key levels; 1h for HTF bias. Need enough 5m candles for SMA(20), RSI(14), ATR(14).
+DELTA_RESOLUTION   = ENV.fetch('DELTA_RESOLUTION', '5m')
+INTRADAY_MINUTES   = ENV.fetch('DELTA_LOOKBACK_MINUTES', '120').to_i
+HTF_RESOLUTION     = '1h'
+HTF_LOOKBACK_HOURS = ENV.fetch('DELTA_HTF_LOOKBACK_HOURS', '24').to_i
+SMA_PERIOD         = 20
+RSI_PERIOD         = 14
+ATR_PERIOD         = 14
 
 def delta_symbols
   raw = ENV.fetch('DELTA_SYMBOLS', nil)
@@ -44,21 +48,34 @@ def format_num(value)
   value.is_a?(Numeric) ? value.round(2) : value
 end
 
+def format_levels(arr)
+  arr.is_a?(Array) && arr.any? ? arr.map { |x| format_num(x) }.join(', ') : '—'
+end
+
 def build_ai_prompt_delta(symbol, data)
   funding_pct = (data[:funding_rate].to_f * 100).round(4)
-  smc_line = data[:smc_summary] || '—'
-  <<~PROMPT
-    #{symbol} perpetual (futures) on Delta Exchange — analyse for trading the perpetual, not spot.
+  levels = data[:key_levels] || {}
+  res = format_levels(levels[:resistance])
+  sup = format_levels(levels[:support])
+  atr_pct = data[:atr_pct]
+  htf = data[:htf_trend]
+  funding_reg = data[:funding_regime] || '—'
+  ob = data[:orderbook_imbalance]
 
-    Market:   Mark #{format_num(data[:mark_price])} | Index #{format_num(data[:spot_price])} (ref) | Funding #{funding_pct}% | OI #{data[:oi]} | Chg 24h #{data[:mark_change_24h]}%
-    Indicators: RSI #{format_num(data[:rsi_14])} | SMA(20) #{format_num(data[:sma_20])} | Trend #{data[:trend]}
-    SMC: #{smc_line}
+  sections = []
+  sections << "#{symbol} perpetual (futures) on Delta Exchange. Analyse for trading the perpetual, not spot."
+  sections << "Market: Mark #{format_num(data[:mark_price])} | Index #{format_num(data[:spot_price])} (ref) | OI #{data[:oi]} | Chg 24h #{data[:mark_change_24h]}%"
+  sections << "LT (5m): RSI #{format_num(data[:rsi_14])} | SMA(20) #{format_num(data[:sma_20])} | Trend #{data[:trend]}"
+  sections << "HTF (1h): #{htf || '—'} (structure: #{data[:htf_structure] || '—'})"
+  sections << "Key levels — Resistance: #{res} | Support: #{sup}"
+  sections << "Funding: #{funding_pct}% (#{funding_reg})"
+  sections << "Volatility: ATR #{format_num(data[:atr])} (#{atr_pct}% of price)" if atr_pct
+  sections << "Orderbook: bid share #{ob[:imbalance_ratio]}" if ob && ob[:imbalance_ratio]
+  sections << "SMC: #{data[:smc_summary] || '—'}"
 
-    Reply in 2–4 lines only. Format:
-    • Bias: Long | Short | No trade
-    • Reason: (one short line)
-    • Action: (optional: level or wait)
-  PROMPT
+  prompt = sections.join("\n")
+  prompt += "\n\nReply in 2–4 lines. Format:\n• Bias: Long | Short | No trade\n• Reason: (one short line)\n• Action: (optional: level or wait)"
+  prompt
 end
 
 def print_and_call_ai(symbol, ai_prompt, data)
@@ -95,6 +112,8 @@ def run_cycle_for(symbol)
 
   end_ts   = Time.now.to_i
   start_ts = end_ts - (INTRADAY_MINUTES * 60)
+  start_ts_1h = end_ts - (HTF_LOOKBACK_HOURS * 3600)
+
   candles_resp = client.candles(symbol: symbol, resolution: DELTA_RESOLUTION, start_ts: start_ts, end_ts: end_ts)
   candle_list = candles_resp.is_a?(Hash) ? candles_resp['result'] : nil
   candle_list = Array(candle_list || [])
@@ -103,11 +122,32 @@ def run_cycle_for(symbol)
   highs = candle_list.filter_map { |c| (c['high'] || c[:high])&.to_f }
   lows  = candle_list.filter_map { |c| (c['low'] || c[:low])&.to_f }
 
+  candles_1h_resp = client.candles(symbol: symbol, resolution: HTF_RESOLUTION, start_ts: start_ts_1h, end_ts: end_ts)
+  list_1h = candles_1h_resp.is_a?(Hash) ? candles_1h_resp['result'] : nil
+  list_1h = Array(list_1h || [])
+  closes_1h = list_1h.filter_map { |c| (c['close'] || c[:close])&.to_f }
+  highs_1h = list_1h.filter_map { |c| (c['high'] || c[:high])&.to_f }
+  lows_1h  = list_1h.filter_map { |c| (c['low'] || c[:low])&.to_f }
+  sma_1h = TechnicalIndicators.sma(closes_1h, SMA_PERIOD)
+  last_close_1h = closes_1h.last
+  htf_trend = Delta::Analysis.htf_trend_label(last_close_1h, sma_1h)
+  htf_structure = SMC.structure_label(highs_1h, lows_1h)
+
+  orderbook_resp = begin
+    client.orderbook(symbol, depth: 20)
+  rescue StandardError
+    nil
+  end
+  orderbook_imbalance = Delta::Analysis.orderbook_imbalance(orderbook_resp)
+
   sma_20 = TechnicalIndicators.sma(closes, SMA_PERIOD)
   rsi_14 = TechnicalIndicators.rsi(closes, RSI_PERIOD)
-  # Trend from perpetual mark vs SMA(perpetual closes) — we trade the perpetual, not spot
   trend  = trend_label(mark_price, sma_20)
+  atr    = TechnicalIndicators.atr(highs, lows, closes, ATR_PERIOD)
+  atr_ctx = Delta::Analysis.atr_context(atr, mark_price)
   smc_summary = SMC.summary(opens, highs, lows, closes, mark_price)
+  key_levels = Delta::Analysis.key_levels(highs, lows)
+  funding_regime = Delta::Analysis.funding_regime(funding_rate)
 
   data = {
     mark_price: mark_price,
@@ -118,7 +158,14 @@ def run_cycle_for(symbol)
     rsi_14: rsi_14,
     trend: trend,
     mark_change_24h: mark_change,
-    smc_summary: smc_summary
+    smc_summary: smc_summary,
+    key_levels: key_levels,
+    funding_regime: funding_regime,
+    atr: atr_ctx[:atr],
+    atr_pct: atr_ctx[:atr_pct],
+    htf_trend: htf_trend,
+    htf_structure: htf_structure,
+    orderbook_imbalance: orderbook_imbalance
   }
   prompt = build_ai_prompt_delta(symbol, data)
   print_and_call_ai(symbol, prompt, data)

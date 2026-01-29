@@ -21,6 +21,12 @@ module FormatDeltaReport
     format("  %-#{LABEL_W}s  %s", label.to_s, value.to_s)
   end
 
+  def levels_str(arr)
+    return '—' if arr.nil? || !arr.is_a?(Array) || arr.empty?
+
+    arr.map { |x| num(x) }.join(', ')
+  end
+
   def section_title(symbol)
     title = "#{symbol} Perpetual · Delta Exchange"
     format("  ╭#{'─' * (WIDTH - 2)}╮\n  │ %-#{WIDTH - 4}s │\n  ╰#{'─' * (WIDTH - 2)}╯", title)
@@ -30,7 +36,7 @@ module FormatDeltaReport
     funding_pct = (data[:funding_rate].to_f * 100).round(4)
     verdict = (ai_response || '').to_s.strip.gsub(/\n+/, ' ').strip
     verdict = '— No AI verdict' if verdict.empty?
-    smc = (data[:smc_summary] || '—').to_s
+    levels = data[:key_levels] || {}
 
     lines = []
     lines << ''
@@ -39,17 +45,29 @@ module FormatDeltaReport
     lines << '  Market'
     lines << row('Mark', num(data[:mark_price]))
     lines << row('Index (ref)', num(data[:spot_price]))
-    lines << row('Funding', "#{funding_pct}%")
+    lines << row('Funding', "#{funding_pct}% (#{data[:funding_regime] || '—'})")
     lines << row('OI', data[:oi].to_s)
     lines << row('Chg 24h', "#{data[:mark_change_24h]}%")
     lines << "  #{RULER}"
-    lines << '  Indicators'
+    lines << '  Key levels'
+    lines << row('Resistance', levels_str(levels[:resistance]))
+    lines << row('Support', levels_str(levels[:support]))
+    lines << "  #{RULER}"
+    lines << '  LT (5m)'
     lines << row('RSI(14)', num(data[:rsi_14]))
     lines << row('SMA(20)', num(data[:sma_20]))
     lines << row('Trend', data[:trend].to_s)
+    lines << row('ATR(14)', "#{num(data[:atr])} (#{data[:atr_pct]}%)") if data[:atr_pct]
+    lines << "  #{RULER}"
+    lines << '  HTF (1h)'
+    lines << row('Trend', data[:htf_trend].to_s)
+    lines << row('Structure', data[:htf_structure].to_s)
+    if data[:orderbook_imbalance] && data[:orderbook_imbalance][:imbalance_ratio]
+      lines << row('OB imbalance', data[:orderbook_imbalance][:imbalance_ratio].to_s)
+    end
     lines << "  #{RULER}"
     lines << '  SMC'
-    lines << row('', smc)
+    lines << row('', (data[:smc_summary] || '—').to_s)
     lines << "  #{RULER}"
     lines << '  Verdict'
     lines << "  #{verdict}"
@@ -63,12 +81,17 @@ module FormatDeltaReport
     funding_pct = (data[:funding_rate].to_f * 100).round(4)
     verdict = (ai_response || '').to_s.strip.gsub(/\n+/, ' ').strip
     verdict = '—' if verdict.empty?
+    levels = data[:key_levels] || {}
+    res = levels_str(levels[:resistance])
+    sup = levels_str(levels[:support])
 
     <<~MSG
       #{symbol} Perp · Delta
       Mark #{num(data[:mark_price])} · Index #{num(data[:spot_price])}
-      Funding #{funding_pct}% · OI #{data[:oi]} · Chg24h #{data[:mark_change_24h]}%
-      RSI #{num(data[:rsi_14])} · #{data[:trend]}
+      Funding #{funding_pct}% (#{data[:funding_regime] || '—'}) · OI #{data[:oi]} · Chg24h #{data[:mark_change_24h]}%
+      R:#{res} S:#{sup}
+      LT #{data[:trend]} · RSI #{num(data[:rsi_14])}#{" · ATR #{data[:atr_pct]}%" if data[:atr_pct]}
+      HTF #{data[:htf_trend]} (#{data[:htf_structure]})
       SMC: #{data[:smc_summary] || '—'}
 
       → #{verdict}

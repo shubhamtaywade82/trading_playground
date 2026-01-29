@@ -28,4 +28,20 @@ module TechnicalIndicators
          end
     100 - (100 / (1 + rs))
   end
+
+  # Average True Range (period default 14). Inputs: highs, lows, closes (oldest first).
+  def atr(highs, lows, closes, period = 14)
+    return nil if highs.nil? || lows.nil? || closes.nil?
+    return nil if highs.size < 2 || highs.size != lows.size || highs.size != closes.size
+    return nil if highs.size < period + 1
+
+    trs = []
+    (1...highs.size).each do |i|
+      hl = highs[i] - lows[i]
+      hc = (highs[i] - closes[i - 1]).abs
+      lc = (lows[i] - closes[i - 1]).abs
+      trs << [hl, hc, lc].max
+    end
+    trs.last(period).sum / period.to_f
+  end
 end

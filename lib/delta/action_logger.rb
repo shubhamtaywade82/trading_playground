@@ -71,6 +71,15 @@ module DeltaActionLogger
       action: parsed[:action],
       levels: parsed[:levels]
     }
+    key_levels = data[:key_levels]
+    if key_levels.is_a?(Hash)
+      record[:key_levels] = {
+        resistance: Array(key_levels[:resistance]),
+        support: Array(key_levels[:support])
+      }
+    end
+    record[:atr] = data[:atr] if data[:atr]
+    record[:atr_pct] = data[:atr_pct] if data[:atr_pct]
     FileUtils.mkdir_p(log_dir)
     File.open(log_path, 'a') { |f| f.puts(record.to_json) }
   end
