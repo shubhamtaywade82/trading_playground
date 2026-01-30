@@ -86,7 +86,7 @@ module FormatDhanReport
     lines << "  #{RULER}"
     lines << '  Strike to trade'
     lines << row('', strike_line)
-    lines << '  Hold until'
+    lines << '  Exit rules'
     lines << row('', hold_until_line(data))
     spot_monitor = spot_monitor_lines(data, ai_response)
     if spot_monitor.any?
@@ -128,7 +128,7 @@ module FormatDhanReport
     expiry = data[:nearest_expiry].to_s.strip
     return '—' if expiry.empty?
 
-    "Expiry #{expiry}. Exit by EOD (3:15 PM IST) or target/stop hit."
+    "SL mandatory. Exit on target/stop/trail; breakeven after R:R. Respect theta — do not hold to expiry. Expiry #{expiry} (contract end)."
   end
 
   # Spot levels to monitor for the recommended option trade: when to enter, target, stop, what to expect.
@@ -200,7 +200,7 @@ module FormatDhanReport
       R:#{res} S:#{sup}
       SMC: #{data[:smc_summary] || '—'}
       Strike: #{strike_tg}
-      Hold until: #{hold_tg}#{spot_tg}
+      Exit: #{hold_tg}#{spot_tg}
 
       → #{verdict}
     MSG

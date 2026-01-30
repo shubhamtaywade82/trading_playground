@@ -23,7 +23,7 @@ module Dhan
         lines << 'Options buying only (no selling). Reply in 2–4 lines. Format:'
         lines << '• Bias: Buy CE (bullish) | Buy PE (bearish) | No trade'
         lines << '• Reason: (one short line)'
-        lines << '• Action: (optional: level or wait). When suggesting a trade, you may reference the suggested strikes and hold-until above.'
+        lines << '• Action: (level or wait). When suggesting a trade, reference suggested strikes and exit: target/stop/SL or trail. Do not recommend holding to expiry; respect theta.'
         lines.join("\n")
       end
 
@@ -31,7 +31,7 @@ module Dhan
         suggestions = data[:strike_suggestions]
         expiry = data[:nearest_expiry].to_s.strip
         strike_part = format_strike_suggestions(suggestions)
-        hold_part = expiry.empty? ? '' : "Hold until: #{expiry} (expiry) or EOD / target hit."
+        hold_part = expiry.empty? ? '' : "Exit: SL mandatory; target/stop/trail; breakeven after R:R. Respect theta — do not hold to expiry. Expiry #{expiry}."
         [strike_part, hold_part].reject(&:empty?).join(' ')
       end
 
