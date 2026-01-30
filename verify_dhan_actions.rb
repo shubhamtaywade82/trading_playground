@@ -184,6 +184,7 @@ def run(opts)
   puts "  Verification summary (computed from log)"
   puts "  ═════════════════════════════════════════════"
   puts summary_bullets(stats, next_n)
+  puts "\n  One-line takeaway: #{one_line_takeaway(stats, next_n)}"
   puts "\n"
 
   return unless opts[:ai] && report_lines.any?
@@ -194,7 +195,7 @@ def run(opts)
       Verification stats (from Dhan AI action log, next #{next_n} spot readings):
       #{summary_bullets(stats, next_n)}
 
-      Write one short paragraph (2–3 sentences) takeaway for the trader. Do not repeat the numbers; interpret them (e.g. "Action levels were hit often" or "No-trade was right to wait" or "Key levels held"). No preamble.
+      Write one short paragraph (2–3 sentences) for the trader. Use only the numbers in the stats above; do not invent any other numbers, fractions, or ratios. Interpret what they mean (e.g. action levels hit often, resistance vs support breaks). No preamble.
     PROMPT
     summary = AiCaller.call(prompt, provider: ai_provider, model: ENV.fetch('AI_MODEL', nil))
     puts '  ═════════════════════════════════════════════'
@@ -242,6 +243,18 @@ def summary_bullets(stats, next_n)
   end
   lines << takeaway
   lines.join("\n")
+end
+
+def one_line_takeaway(stats, next_n)
+  return "No action levels to verify." if stats[:action_entries].zero?
+
+  pct = (100.0 * stats[:action_entries_hit] / stats[:action_entries]).round(0)
+  r = stats[:key_r_broken]
+  s = stats[:key_s_broken]
+  parts = ["#{stats[:action_entries_hit]}/#{stats[:action_entries]} action levels hit (#{pct}%) in next #{next_n} spot"]
+  parts << "R broke #{r}×" if r.positive?
+  parts << "S broke #{s}×" if s.positive?
+  parts.join("; ") + "."
 end
 
 run(parse_args)
