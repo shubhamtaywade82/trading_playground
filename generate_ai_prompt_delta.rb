@@ -16,7 +16,9 @@ require_relative 'lib/delta/client'
 require_relative 'lib/delta/format_report'
 require_relative 'lib/delta/action_logger'
 require_relative 'lib/delta/system_prompts'
+require_relative 'lib/delta/prompt_builder'
 require_relative 'lib/delta/analysis'
+require_relative 'lib/indicator_helpers'
 require_relative 'lib/candle'
 require_relative 'lib/candle_series'
 require_relative 'lib/pattern_summary'
@@ -41,19 +43,7 @@ def delta_symbols
 end
 
 def trend_label(spot, sma)
-  return 'Neutral' if sma.nil?
-  return 'Bullish (above SMA)' if spot > sma
-  return 'Bearish (below SMA)' if spot < sma
-
-  'Neutral'
-end
-
-def format_num(value)
-  value.is_a?(Numeric) ? value.round(2) : value
-end
-
-def format_levels(arr)
-  arr.is_a?(Array) && arr.any? ? arr.map { |x| format_num(x) }.join(', ') : '—'
+  IndicatorHelpers.trend_label(spot, sma)
 end
 
 def delta_candle_list_to_candles(list)
@@ -98,33 +88,6 @@ def delta_pattern_summary(client, symbol, end_ts, candle_list, list_1h)
   PatternSummary.call(context)
 rescue StandardError
   'Pattern: None'
-end
-
-def build_ai_prompt_delta(symbol, data)
-  funding_pct = (data[:funding_rate].to_f * 100).round(4)
-  levels = data[:key_levels] || {}
-  res = format_levels(levels[:resistance])
-  sup = format_levels(levels[:support])
-  atr_pct = data[:atr_pct]
-  htf = data[:htf_trend]
-  funding_reg = data[:funding_regime] || '—'
-  ob = data[:orderbook_imbalance]
-
-  sections = []
-  sections << "#{symbol} perpetual (futures) on Delta Exchange. Analyse for trading the perpetual, not spot."
-  sections << "Market: Mark #{format_num(data[:mark_price])} | Index #{format_num(data[:spot_price])} (ref) | OI #{data[:oi]} | Chg 24h #{data[:mark_change_24h]}%"
-  sections << "LT (5m): RSI #{format_num(data[:rsi_14])} | SMA(20) #{format_num(data[:sma_20])} | Trend #{data[:trend]}"
-  sections << "HTF (1h): #{htf || '—'} (structure: #{data[:htf_structure] || '—'})"
-  sections << "Key levels — Resistance: #{res} | Support: #{sup}"
-  sections << "Funding: #{funding_pct}% (#{funding_reg})"
-  sections << "Volatility: ATR #{format_num(data[:atr])} (#{atr_pct}% of price)" if atr_pct
-  sections << "Orderbook: bid share #{ob[:imbalance_ratio]}" if ob && ob[:imbalance_ratio]
-  sections << "SMC: #{data[:smc_summary] || '—'}"
-  sections << (data[:pattern_summary] || 'Pattern: None')
-
-  prompt = sections.join("\n")
-  prompt += "\n\nReply in 2–4 lines. Format:\n• Bias: Long | Short | No trade\n• Reason: (one short line)\n• Action: (optional: level or wait)"
-  prompt
 end
 
 def print_and_call_ai(symbol, ai_prompt, data)
@@ -219,7 +182,7 @@ def run_cycle_for(symbol)
     orderbook_imbalance: orderbook_imbalance,
     pattern_summary: pattern_summary
   }
-  prompt = build_ai_prompt_delta(symbol, data)
+  prompt = Delta::PromptBuilder.build(symbol, data)
   print_and_call_ai(symbol, prompt, data)
 end
 

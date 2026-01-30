@@ -1,23 +1,28 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# Reads log/delta_ai_actions.jsonl and checks whether suggested levels were hit by current price.
-# Usage: ruby verify_delta_actions.rb [--last N] [--since YYYY-MM-DD] [--hours H] [--ai]
+# Reads log/dhan_ai_actions.jsonl and checks whether suggested levels were hit by current spot.
+# Usage: ruby verify_dhan_actions.rb [--last N] [--since YYYY-MM-DD] [--hours H] [--ai]
 #   --last N     verify last N log entries (default: 20)
 #   --since DATE entries on or after DATE
 #   --hours H    entries in last H hours
-#   --no-fetch   do not fetch current price; only print log entries
+#   --no-fetch   do not fetch current spot from Dhan; only print log entries
 #   --ai         after report, send it to AI (OpenAI/Ollama) for a short summary; needs AI_PROVIDER
 
 require 'dotenv'
 Dotenv.load(File.expand_path('.env', __dir__))
 
+ENV['CLIENT_ID']    ||= ENV.fetch('DHAN_CLIENT_ID', nil)
+ENV['ACCESS_TOKEN'] ||= ENV.fetch('DHAN_ACCESS_TOKEN', nil)
+
 require 'json'
 require 'time'
-require_relative 'lib/delta/client'
+require 'date'
+require_relative 'lib/dhan/option_chain_metrics'
 require_relative 'lib/ai_caller'
 
-LOG_PATH = File.join(__dir__, 'log', 'delta_ai_actions.jsonl')
+LOG_PATH = File.join(__dir__, 'log', 'dhan_ai_actions.jsonl')
+EXCHANGE_SEGMENT = 'IDX_I'
 
 def parse_args
   opts = { last: 20, fetch: true, ai: false }
@@ -25,10 +30,10 @@ def parse_args
   while (arg = args.shift)
     case arg
     when '--last'     then opts[:last] = args.shift.to_i
-    when '--since'    then opts[:since] = args.shift
-    when '--hours'    then opts[:hours] = args.shift.to_f
+    when '--since'   then opts[:since] = args.shift
+    when '--hours'   then opts[:hours] = args.shift.to_f
     when '--no-fetch' then opts[:fetch] = false
-    when '--ai'       then opts[:ai] = true
+    when '--ai'      then opts[:ai] = true
     end
   end
   opts
@@ -57,66 +62,73 @@ def filter_entries(entries, opts)
   entries
 end
 
-def current_marks(symbols)
-  client = DeltaExchangeClient.new
-  symbols.to_h { |s| [s, client.ticker(s).dig('result', 'mark_price')&.to_f] }
+def current_spots(symbols)
+  require 'dhan_hq'
+  DhanHQ.configure_with_env
+  symbols.to_h do |s|
+    inst = DhanHQ::Models::Instrument.find(EXCHANGE_SEGMENT, s)
+    spot = nil
+    if inst
+      chain = nil
+      expiries = Array(inst.expiry_list)
+      nearest = expiries.filter_map { |e| Date.parse(e.to_s) rescue nil }.select { |d| d >= Date.today }.min&.to_s
+      if nearest
+        chain = inst.option_chain(expiry: nearest)
+        last_price, = Dhan::OptionChainMetrics.extract(chain)
+        spot = last_price.to_f if last_price
+      end
+      spot ||= (inst.ohlc.is_a?(Hash) && (inst.ohlc['last_price'] || inst.ohlc['close']))&.to_f
+    end
+    [s, spot]
+  end
+rescue LoadError, StandardError => e
+  warn "Could not fetch current spot from Dhan: #{e.message}"
+  {}
 end
 
 def format_level(level)
   level.is_a?(Numeric) ? level.round(2) : level
 end
 
-def indent_continuations(s)
-  return '—' if s.to_s.strip.empty?
-
-  s.to_s.strip.gsub("\n", "\n  ")
-end
-
-def verify_one(entry, mark_now)
-  mark_then = entry['mark_price']&.to_f
+def verify_one(entry, spot_now)
+  spot_then = entry['spot_price']&.to_f
   levels = Array(entry['levels'])
   key_levels = entry['key_levels']
-  atr = entry['atr']
-  atr_pct = entry['atr_pct']
   bias = entry['bias']
   lines = []
   lines << "  At:    #{entry['at']}"
-  lines << "  Symbol: #{entry['symbol']}  Mark then: #{mark_then}  Mark now: #{mark_now || '—'}"
-  if atr || atr_pct
-    vol = [atr && "ATR #{format_level(atr)}", atr_pct && "#{format_level(atr_pct)}%"].compact.join(' ')
-    lines << "  Volatility (then): #{vol}"
-  end
+  lines << "  Symbol: #{entry['symbol']}  Spot then: #{spot_then}  Spot now: #{spot_now || '—'}"
   lines << "  Bias:  #{bias || '—'}"
-  lines << "  Reason: #{indent_continuations(entry['reason'])}"
-  lines << "  Action: #{indent_continuations(entry['action'])}"
+  lines << "  Reason: #{entry['reason'] || '—'}"
+  lines << "  Action: #{entry['action'] || '—'}"
 
-  if key_levels.is_a?(Hash) && mark_now
+  if key_levels.is_a?(Hash) && spot_now
     res = Array(key_levels['resistance'] || key_levels[:resistance])
     sup = Array(key_levels['support'] || key_levels[:support])
     if res.any? || sup.any?
       lines << '  Key levels (SMC):'
       res.each do |level|
         l = level.to_f
-        status = mark_now >= l ? '✓ broke above' : '— below'
-        lines << "    R #{format_level(l)} → now #{mark_now.round(2)} #{status}"
+        status = spot_now >= l ? '✓ broke above' : '— below'
+        lines << "    R #{format_level(l)} → now #{spot_now.round(2)} #{status}"
       end
       sup.each do |level|
         l = level.to_f
-        status = mark_now <= l ? '✓ broke below' : '— above'
-        lines << "    S #{format_level(l)} → now #{mark_now.round(2)} #{status}"
+        status = spot_now <= l ? '✓ broke below' : '— above'
+        lines << "    S #{format_level(l)} → now #{spot_now.round(2)} #{status}"
       end
     end
   end
 
-  if levels.any? && mark_now
+  if levels.any? && spot_now
     lines << '  Action levels:'
     levels.each do |level|
-      above = mark_now >= level
+      above = spot_now >= level
       status = above ? '✓ price above' : '✗ price below'
-      lines << "    #{format_level(level)} → now #{mark_now.round(2)} #{status}"
+      lines << "    #{format_level(level)} → now #{spot_now.round(2)} #{status}"
     end
   elsif levels.any?
-    lines << "  Action levels: #{levels.map { |l| format_level(l) }.join(', ')} (no current price)"
+    lines << "  Action levels: #{levels.map { |l| format_level(l) }.join(', ')} (no current spot)"
   end
   lines.join("\n")
 end
@@ -124,24 +136,23 @@ end
 def run(opts)
   entries = read_log(LOG_PATH)
   if entries.empty?
-    puts "No log entries in #{LOG_PATH}. Run generate_ai_prompt_delta.rb with AI_PROVIDER set first."
+    puts "No log entries in #{LOG_PATH}. Run generate_ai_prompt.rb with AI_PROVIDER set first."
     return
   end
 
   entries = filter_entries(entries, opts)
-  entries = entries.last(opts[:last]) if opts[:last].positive?
 
   symbols = entries.map { |e| e['symbol'] }.uniq
-  marks = opts[:fetch] ? current_marks(symbols) : {}
+  spots = opts[:fetch] ? current_spots(symbols) : {}
 
   puts "\n  ═════════════════════════════════════════════"
-  puts "  Delta AI actions verification (#{entries.size} entries)"
+  puts "  Dhan AI actions verification (#{entries.size} entries)"
   puts "  ═════════════════════════════════════════════\n"
 
   report_lines = []
   entries.reverse_each do |entry|
-    mark_now = marks[entry['symbol']]
-    block = verify_one(entry, mark_now)
+    spot_now = spots[entry['symbol']]
+    block = verify_one(entry, spot_now)
     report_lines << block
     puts block
     puts '  ' + ('─' * 44)
@@ -154,7 +165,7 @@ def run(opts)
   if ai_provider && %w[openai ollama].include?(ai_provider)
     report_text = report_lines.join("\n\n")
     prompt = <<~PROMPT
-      Below is a verification report of Delta Exchange AI suggestions: bias/action, suggested levels, and (when present) key SMC levels (resistance R / support S) and volatility (ATR) at log time. For each entry we compare current price to those levels (broke above/below). Summarise in 3–5 short lines: which levels were hit, which were not, and one takeaway (e.g. how many calls were right so far).
+      Below is a verification report of Dhan (NIFTY/SENSEX) AI suggestions: bias/action, suggested levels, and (when present) key SMC levels (resistance R / support S) at log time. For each entry we compare current spot to those levels (broke above/below). Summarise in 3–5 short lines: which levels were hit, which were not, and one takeaway (e.g. how many calls were right so far).
 
       Report:
       #{report_text}

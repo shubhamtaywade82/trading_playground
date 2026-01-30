@@ -14,8 +14,11 @@ Full rules and assumptions: [docs/pcr_trend_reversal_strategy.md](docs/pcr_trend
 ## Repo layout
 
 - `docs/` — Strategy doc, chart patterns reference, and notes.
-- `lib/` — Shared helpers (e.g. `technical_indicators.rb`).
-- `generate_ai_prompt.rb` — Fetches live NIFTY data (PCR, OHLC, 5-min intraday, SMA, RSI) and prints an AI prompt for CE/PE reversal suggestions.
+- `lib/` — Shared helpers and focused modules (SOLID-style):
+  - `lib/indicator_helpers.rb` — Shared `trend_label`, `format_num`, `format_levels` for prompts (Dhan + Delta).
+  - `lib/dhan/` — Option chain metrics, OHLC normalizer, key levels, prompt builder, format report, action logger.
+  - `lib/delta/` — Prompt builder, system prompts, format report, action logger, analysis, agents.
+- `generate_ai_prompt.rb` — Coordinates Dhan: fetches data, builds prompt via `Dhan::PromptBuilder`, calls AI, logs and reports.
 
 ## Running `generate_ai_prompt.rb`
 
@@ -39,6 +42,14 @@ Full rules and assumptions: [docs/pcr_trend_reversal_strategy.md](docs/pcr_trend
 **Mock (no Dhan):** `MOCK_DATA=1 ruby generate_ai_prompt.rb` — uses fake market data (no credentials); prompt + AI still run. Use to test AI integration without live data.
 
 **Underlyings:** By default both NIFTY and SENSEX are analyzed per cycle. Override: `UNDERLYINGS=NIFTY,SENSEX` or `UNDERLYING=NIFTY` for a single index.
+
+**Log and verify:** Verdict + context are written to `log/dhan_ai_actions.jsonl` (disable with `DHAN_LOG_ACTIONS=0`). To check whether suggested levels were hit by current spot:
+
+```bash
+ruby verify_dhan_actions.rb --last 20
+ruby verify_dhan_actions.rb --since 2026-01-29 --no-fetch   # print log only, no Dhan API
+ruby verify_dhan_actions.rb --hours 24 --ai   # report + AI summary (needs AI_PROVIDER)
+```
 
 **Live trading usage (Dhan options vs Delta crypto):** See [docs/live_trading_usage.md](docs/live_trading_usage.md) for how to best use the repo for Dhan options buying (signals only; orders manual) and Delta crypto perpetuals (full pipeline + optional automated execution).
 

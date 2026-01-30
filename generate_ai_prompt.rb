@@ -12,6 +12,7 @@
 # Loop:  export LOOP_INTERVAL=300 to run every 5 minutes (errors in a cycle don't exit).
 # Mock:  MOCK_DATA=1 uses fake market data (no Dhan API); AI still runs if AI_PROVIDER set.
 # Log:   Verdict + context written to log/dhan_ai_actions.jsonl (disable with DHAN_LOG_ACTIONS=0).
+# Skills: When .cursor/skills/intraday-options/ exists, its Hard Rules + Output are appended to the system prompt.
 # Run:   ruby generate_ai_prompt.rb
 #
 # Env:   Loads .env from the script directory if present (via dotenv gem).
@@ -31,8 +32,15 @@ require_relative 'lib/candle'
 require_relative 'lib/candle_series'
 require_relative 'lib/pattern_summary'
 require_relative 'lib/ai_caller'
+require_relative 'lib/indicator_helpers'
+require_relative 'lib/dhan/option_chain_metrics'
+require_relative 'lib/dhan/ohlc_normalizer'
+require_relative 'lib/dhan/key_levels'
+require_relative 'lib/dhan/strike_suggestions'
+require_relative 'lib/dhan/prompt_builder'
 require_relative 'lib/dhan/format_report'
 require_relative 'lib/dhan/action_logger'
+require_relative 'lib/intraday_options_skills'
 require_relative 'lib/telegram_notifier'
 require_relative 'lib/mock_market_data' if MOCK_MODE
 
@@ -50,12 +58,20 @@ RSI_PERIOD         = 14
 DHAN_INTRADAY_DAYS = ENV.fetch('DHAN_INTRADAY_DAYS', '5').to_i.clamp(1, 90)
 
 # System prompt so the model thinks as NIFTY/SENSEX options-buying analyst, not generic.
-DHAN_OPTIONS_SYSTEM_PROMPT = <<~TEXT.strip.freeze
+DHAN_OPTIONS_SYSTEM_PROMPT_BASE = <<~TEXT.strip.freeze
   You are an options analyst focused only on NIFTY and SENSEX index options for intraday trading.
   Strategy: options buying only — buy CE when bullish, buy PE when bearish. No option selling.
   Use PCR, RSI, trend (vs SMA), SMC structure, and key levels together; prefer "No trade" when signals conflict or are weak.
-  Reply in 2–4 lines: Bias (Buy CE / Buy PE / No trade), Reason (one short line), optional Action (level or wait). Do not give generic market commentary; stick to this strategy and the data provided.
+  The prompt includes suggested strikes (CE/PE symbols) and hold-until (expiry or EOD). When suggesting a trade, you may reference specific strikes from the list and the hold-until guidance in your Action.
+  Reply in 2–4 lines: Bias (Buy CE / Buy PE / No trade), Reason (one short line), Action (level or wait; optionally mention strike and hold until). Do not give generic market commentary; stick to this strategy and the data provided.
 TEXT
+
+def dhan_system_prompt
+  guardrails = IntradayOptionsSkills.guardrails_for_prompt(root: __dir__)
+  return DHAN_OPTIONS_SYSTEM_PROMPT_BASE if guardrails.to_s.strip.empty?
+
+  "#{DHAN_OPTIONS_SYSTEM_PROMPT_BASE}\n\n#{guardrails}"
+end
 
 def underlyings
   raw = ENV.fetch('UNDERLYINGS', nil)
@@ -64,97 +80,6 @@ def underlyings
 
   single = ENV.fetch('UNDERLYING', nil)&.strip
   single ? [single] : %w[NIFTY SENSEX]
-end
-
-def extract_oc_and_last_price(option_chain_response)
-  raw = option_chain_response
-  data = raw.is_a?(Hash) ? (raw['data'] || raw) : raw
-  return [nil, nil, nil] unless data
-
-  last_price = data['last_price'] || data[:last_price]
-  oc = data['oc'] || data[:oc]
-  [last_price, oc, data]
-end
-
-def sum_oi(oc, side)
-  return 0 unless oc.is_a?(Hash)
-
-  key = side == :call ? 'ce' : 'pe'
-  oc.sum do |_strike, row|
-    next 0 unless row.is_a?(Hash)
-
-    leg = row[key] || row[key.to_sym]
-    (leg && (leg['oi'] || leg[:oi])).to_i
-  end
-end
-
-# Option chain: we use last_price, call_oi, put_oi (PCR), ATM IV, total volume. Not yet: greeks, bid/ask, previous_*.
-def option_chain_metrics(oc, spot_price)
-  out = { call_oi: 0, put_oi: 0, atm_iv_ce: nil, atm_iv_pe: nil, total_volume: 0 }
-  return out unless oc.is_a?(Hash) && spot_price.is_a?(Numeric)
-
-  out[:call_oi] = sum_oi(oc, :call)
-  out[:put_oi]  = sum_oi(oc, :put)
-  strike_key = oc.keys.min_by { |k| ((k.to_s.to_f rescue 0) - spot_price).abs }
-  if strike_key && oc[strike_key].is_a?(Hash)
-    row = oc[strike_key]
-    ce = row['ce'] || row[:ce]
-    pe = row['pe'] || row[:pe]
-    out[:atm_iv_ce] = (ce && (ce['implied_volatility'] || ce[:implied_volatility]))&.to_f
-    out[:atm_iv_pe] = (pe && (pe['implied_volatility'] || pe[:implied_volatility]))&.to_f
-  end
-  oc.each do |_strike, row|
-    next unless row.is_a?(Hash)
-
-    %w[ce pe].each do |leg_key|
-      leg = row[leg_key] || row[leg_key.to_sym]
-      out[:total_volume] += (leg && (leg['volume'] || leg[:volume])).to_i
-    end
-  end
-  out
-end
-
-def fetch_closes(intraday_response)
-  ohlc = fetch_ohlc_arrays(intraday_response)
-  ohlc[:closes]
-end
-
-# Dhan charts API returns Hash with open/high/low/close/timestamp arrays (or nested under "data").
-# Some clients return Array of candle hashes. Normalize both to { opens:, highs:, lows:, closes: }.
-def fetch_ohlc_arrays(intraday_response)
-  empty = { opens: [], highs: [], lows: [], closes: [] }
-  raw = intraday_response.is_a?(Hash) && (intraday_response['data'] || intraday_response[:data]).is_a?(Hash) ? (intraday_response['data'] || intraday_response[:data]) : intraday_response
-
-  if raw.is_a?(Hash)
-    closes = raw['close'] || raw[:close]
-    return empty unless closes.is_a?(Array) && closes.any?
-
-    n = closes.size
-    opens = Array(raw['open'] || raw[:open]).map(&:to_f)
-    highs = Array(raw['high'] || raw[:high]).map(&:to_f)
-    lows  = Array(raw['low'] || raw[:low]).map(&:to_f)
-    closes = closes.map(&:to_f)
-    opens = opens.first(n).concat(closes.first(1) * (n - opens.size)) if opens.size < n
-    highs = highs.first(n).concat(closes.first(1) * (n - highs.size)) if highs.size < n
-    lows  = lows.first(n).concat(closes.first(1) * (n - lows.size)) if lows.size < n
-    return { opens: opens.first(n), highs: highs.first(n), lows: lows.first(n), closes: closes }
-  end
-
-  return empty unless raw.is_a?(Array)
-
-  opens  = raw.map { |c| c.is_a?(Hash) ? (c['open'] || c[:open]) : nil }.compact.map(&:to_f)
-  highs  = raw.map { |c| c.is_a?(Hash) ? (c['high'] || c[:high]) : nil }.compact.map(&:to_f)
-  lows   = raw.map { |c| c.is_a?(Hash) ? (c['low'] || c[:low]) : nil }.compact.map(&:to_f)
-  closes = raw.map { |c| c.is_a?(Hash) ? (c['close'] || c[:close]) : nil }.compact.map(&:to_f)
-  { opens: opens, highs: highs, lows: lows, closes: closes }
-end
-
-def key_levels_from_smc(highs, lows)
-  return { resistance: [], support: [] } if highs.nil? || lows.nil? || highs.size < 5 || lows.size < 5
-
-  sh = SMC.swing_highs(highs)
-  sl = SMC.swing_lows(lows)
-  { resistance: sh.last(3).reverse, support: sl.last(3).reverse }
 end
 
 def dhan_intraday_range
@@ -174,7 +99,7 @@ def dhan_pattern_summary(inst, from_date, to_date, ohlc_5m, _symbol)
   candles_1m  = []
   [['60', candles_60m], ['15', candles_15m], ['1', candles_1m]].each do |interval, store|
     raw = inst.intraday(from_date: from_date, to_date: to_date, interval: interval)
-    arr = fetch_ohlc_arrays(raw)
+    arr = Dhan::OhlcNormalizer.from_response(raw)
     next if arr[:closes].size < 5
 
     store.concat(CandleSeries.from_ohlcv_arrays(
@@ -196,47 +121,25 @@ rescue StandardError
 end
 
 def trend_label(spot, sma)
-  return 'Neutral' if sma.nil?
-  return 'Bullish (above SMA)' if spot > sma
-  return 'Bearish (below SMA)' if spot < sma
-
-  'Neutral'
+  IndicatorHelpers.trend_label(spot, sma)
 end
 
-def format_num(value)
-  value.is_a?(Numeric) ? value.round(2) : value
-end
+def print_guardrails_if_loaded
+  guardrails = IntradayOptionsSkills.guardrails_for_prompt(root: __dir__)
+  return if guardrails.to_s.strip.empty?
 
-def format_levels(arr)
-  arr.is_a?(Array) && arr.any? ? arr.map { |x| format_num(x) }.join(', ') : '—'
-end
-
-def build_ai_prompt(symbol, data)
-  pcr = data[:call_oi].positive? ? (data[:put_oi].to_f / data[:call_oi]) : 0.0
-  levels = data[:key_levels] || {}
-  res = format_levels(levels[:resistance])
-  sup = format_levels(levels[:support])
-
-  lines = []
-  iv_str = [data[:atm_iv_ce], data[:atm_iv_pe]].any? ? " | ATM IV CE #{format_num(data[:atm_iv_ce])} / PE #{format_num(data[:atm_iv_pe])}" : ''
-  vol_str = data[:total_volume].to_i.positive? ? " | OC Vol #{data[:total_volume]}" : ''
-  lines << "#{symbol} options — buying only: buy CE when bullish, buy PE when bearish (PCR trend reversal, intraday). Data: Spot #{format_num(data[:spot_price])} | PCR #{format_num(pcr)} | RSI #{format_num(data[:rsi_14])} | Trend #{data[:trend]} | Chg #{data[:last_change]}%.#{iv_str}#{vol_str}"
-  lines << "Key levels — Resistance: #{res} | Support: #{sup}"
-  lines << "SMC: #{data[:smc_summary] || '—'}"
-  lines << (data[:pattern_summary] || 'Pattern: None')
-  lines << ""
-  lines << "Options buying only (no selling). Reply in 2–4 lines. Format:"
-  lines << "• Bias: Buy CE (bullish) | Buy PE (bearish) | No trade"
-  lines << "• Reason: (one short line)"
-  lines << "• Action: (optional: level or wait)"
-  lines.join("\n")
+  puts "  ────────────────────────────────────────────"
+  puts "  System prompt guardrails (intraday-options skills)"
+  puts "  ────────────────────────────────────────────"
+  guardrails.each_line { |line| puts "  #{line.rstrip}" }
+  puts ""
 end
 
 def print_and_call_ai(symbol, ai_prompt, data)
   ai_response = nil
   ai_provider = ENV['AI_PROVIDER']&.strip&.downcase
   if ai_provider && %w[openai ollama].include?(ai_provider)
-    ai_response = AiCaller.call(ai_prompt, provider: ai_provider, model: ENV.fetch('AI_MODEL', nil), system_prompt: DHAN_OPTIONS_SYSTEM_PROMPT)
+    ai_response = AiCaller.call(ai_prompt, provider: ai_provider, model: ENV.fetch('AI_MODEL', nil), system_prompt: dhan_system_prompt)
   end
 
   puts FormatDhanReport.format_console(symbol, data, ai_response)
@@ -256,63 +159,69 @@ def run_cycle_for(symbol)
   inst = DhanHQ::Models::Instrument.find(EXCHANGE_SEGMENT, symbol)
   raise "Instrument not found: #{EXCHANGE_SEGMENT} / #{symbol}" if inst.nil?
 
-  ohlc = inst.ohlc
-  spot_price = nil
-  current_ohlc_str = 'N/A'
-  if ohlc.is_a?(Hash)
-    spot_price = (ohlc['last_price'] || ohlc[:last_price] || ohlc['close'] || ohlc[:close]).to_f
-    o = ohlc['open'] || ohlc[:open]
-    h = ohlc['high'] || ohlc[:high]
-    l = ohlc['low'] || ohlc[:low]
-    c = ohlc['close'] || ohlc[:close]
-    current_ohlc_str = "#{o}/#{h}/#{l}/#{c}" if o && h && l && c
-  end
-  spot_price ||= 0.0
-
-  expiries = inst.expiry_list
-  expiries = Array(expiries) if expiries
-  nearest_expiry = expiries
-                   .filter_map do |e|
-                     Date.parse(e.to_s)
-                   rescue StandardError
-                     nil
-                   end
-                   .select { |d| d >= Date.today }
-                   .min
-                   &.to_s
-
-  oc_metrics = { call_oi: 0, put_oi: 0, atm_iv_ce: nil, atm_iv_pe: nil, total_volume: 0 }
-  if nearest_expiry
-    chain = inst.option_chain(expiry: nearest_expiry)
-    last_price_from_chain, oc, = extract_oc_and_last_price(chain)
-    spot_price = last_price_from_chain.to_f if last_price_from_chain && spot_price.zero?
-    oc_metrics = option_chain_metrics(oc, spot_price) if oc.is_a?(Hash)
-  end
+  spot_price, current_ohlc_str = spot_and_ohlc_str(inst.ohlc)
+  nearest_expiry = nearest_expiry_for(inst.expiry_list)
+  oc_metrics, spot_price, oc = option_chain_metrics_for(inst, nearest_expiry, spot_price)
+  strike_suggestions = Dhan::StrikeSuggestions.suggest(oc, spot_price, nearest_expiry, symbol)
 
   from_date, to_date = dhan_intraday_range
-  intraday_5m  = inst.intraday(from_date: from_date, to_date: to_date, interval: '5')
-  intraday_15m = inst.intraday(from_date: from_date, to_date: to_date, interval: '15')
-  ohlc_5m  = fetch_ohlc_arrays(intraday_5m)
-  ohlc_15m = fetch_ohlc_arrays(intraday_15m)
+  ohlc_5m = Dhan::OhlcNormalizer.from_response(inst.intraday(from_date: from_date, to_date: to_date, interval: '5'))
+  ohlc_15m = Dhan::OhlcNormalizer.from_response(inst.intraday(from_date: from_date, to_date: to_date, interval: '15'))
   closes_5m = ohlc_5m[:closes]
 
   sma_20 = TechnicalIndicators.sma(closes_5m, SMA_PERIOD)
   rsi_14 = TechnicalIndicators.rsi(closes_5m, RSI_PERIOD)
-  trend  = trend_label(spot_price, sma_20)
-
-  last_change = if closes_5m.size >= 2 && closes_5m[-2].nonzero?
-                  ((closes_5m.last - closes_5m[-2]) / closes_5m[-2] * 100).round(2)
-                else
-                  'N/A'
-                end
-
+  trend = trend_label(spot_price, sma_20)
+  last_change = last_change_pct(closes_5m)
   smc_summary = SMC.summary_with_components(
     ohlc_15m[:opens], ohlc_15m[:highs], ohlc_15m[:lows], ohlc_15m[:closes], spot_price
   )
-  key_levels = key_levels_from_smc(ohlc_15m[:highs], ohlc_15m[:lows])
-
+  key_levels = Dhan::KeyLevels.from_ohlc(ohlc_15m[:highs], ohlc_15m[:lows])
   pattern_summary = dhan_pattern_summary(inst, from_date, to_date, ohlc_5m, symbol)
-  data = {
+
+  data = build_cycle_data(
+    spot_price: spot_price, current_ohlc_str: current_ohlc_str, nearest_expiry: nearest_expiry,
+    oc_metrics: oc_metrics, strike_suggestions: strike_suggestions,
+    sma_20: sma_20, rsi_14: rsi_14, trend: trend, last_change: last_change,
+    smc_summary: smc_summary, key_levels: key_levels, pattern_summary: pattern_summary
+  )
+  print_and_call_ai(symbol, Dhan::PromptBuilder.build(symbol, data), data)
+end
+
+def spot_and_ohlc_str(ohlc)
+  spot = 0.0
+  ohlc_str = 'N/A'
+  return [spot, ohlc_str] unless ohlc.is_a?(Hash)
+
+  spot = (ohlc['last_price'] || ohlc[:last_price] || ohlc['close'] || ohlc[:close]).to_f
+  o, h, l, c = ohlc['open'] || ohlc[:open], ohlc['high'] || ohlc[:high], ohlc['low'] || ohlc[:low], ohlc['close'] || ohlc[:close]
+  ohlc_str = "#{o}/#{h}/#{l}/#{c}" if o && h && l && c
+  [spot, ohlc_str]
+end
+
+def nearest_expiry_for(expiries)
+  list = Array(expiries)
+  list.filter_map { |e| Date.parse(e.to_s) rescue nil }
+      .select { |d| d >= Date.today }.min&.to_s
+end
+
+def option_chain_metrics_for(inst, nearest_expiry, spot_price)
+  default = { call_oi: 0, put_oi: 0, atm_iv_ce: nil, atm_iv_pe: nil, total_volume: 0 }
+  return [default, spot_price, nil] unless nearest_expiry
+
+  last_price, oc = Dhan::OptionChainMetrics.extract(inst.option_chain(expiry: nearest_expiry))
+  spot = (last_price && spot_price.zero? ? last_price.to_f : spot_price)
+  metrics = oc.is_a?(Hash) ? Dhan::OptionChainMetrics.metrics(oc, spot) : default
+  [metrics, spot, oc]
+end
+
+def last_change_pct(closes)
+  return 'N/A' if closes.size < 2 || closes[-2].to_f.zero?
+  ((closes.last - closes[-2]) / closes[-2] * 100).round(2)
+end
+
+def build_cycle_data(spot_price:, current_ohlc_str:, nearest_expiry:, oc_metrics:, strike_suggestions:, sma_20:, rsi_14:, trend:, last_change:, smc_summary:, key_levels:, pattern_summary:)
+  {
     spot_price: spot_price,
     current_ohlc_str: current_ohlc_str,
     nearest_expiry: nearest_expiry,
@@ -321,6 +230,7 @@ def run_cycle_for(symbol)
     atm_iv_ce: oc_metrics[:atm_iv_ce],
     atm_iv_pe: oc_metrics[:atm_iv_pe],
     total_volume: oc_metrics[:total_volume],
+    strike_suggestions: strike_suggestions,
     sma_20: sma_20,
     rsi_14: rsi_14,
     trend: trend,
@@ -329,12 +239,11 @@ def run_cycle_for(symbol)
     key_levels: key_levels,
     pattern_summary: pattern_summary
   }
-  print_and_call_ai(symbol, build_ai_prompt(symbol, data), data)
 end
 
 def run_cycle_mock(symbol)
   data = MockMarketData.data(symbol)
-  print_and_call_ai(symbol, build_ai_prompt(symbol, data), data)
+  print_and_call_ai(symbol, Dhan::PromptBuilder.build(symbol, data), data)
 end
 
 def run_cycle
@@ -345,6 +254,7 @@ def run_cycle
   if MOCK_MODE
     puts "  (Mock data — no Dhan API)\n"
   end
+  print_guardrails_if_loaded
   underlyings.each do |symbol|
     MOCK_MODE ? run_cycle_mock(symbol) : run_cycle_for(symbol)
   end

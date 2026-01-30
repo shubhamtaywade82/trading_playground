@@ -82,9 +82,97 @@ module FormatDhanReport
     lines << "  #{RULER}"
     lines << '  Verdict'
     lines << verdict
+    strike_line = strike_to_trade_line(data[:strike_suggestions], ai_response)
+    lines << "  #{RULER}"
+    lines << '  Strike to trade'
+    lines << row('', strike_line)
+    lines << '  Hold until'
+    lines << row('', hold_until_line(data))
+    spot_monitor = spot_monitor_lines(data, ai_response)
+    if spot_monitor.any?
+      lines << "  #{RULER}"
+      lines << '  Monitor spot (entry/exit)'
+      lines << row('Entry (spot)', spot_monitor[:entry] || '—')
+      lines << row('Target (spot)', spot_monitor[:target] || '—')
+      lines << row('Stop (spot)', spot_monitor[:stop] || '—')
+      lines << row('Expect', spot_monitor[:expect] || '—')
+    end
     lines << ''
     lines << "  #{RULER_HEAVY}"
     lines.join("\n")
+  end
+
+  def strike_to_trade_line(suggestions, ai_response)
+    return '—' if suggestions.nil? || !suggestions.is_a?(Hash)
+
+    bias = parse_bias(ai_response)
+    list = case bias
+           when :ce then suggestions[:ce]
+           when :pe then suggestions[:pe]
+           else [*(suggestions[:ce]), *(suggestions[:pe])].compact
+           end
+    list.is_a?(Array) && list.any? ? list.join(', ') : '—'
+  end
+
+  def parse_bias(ai_response)
+    return nil if ai_response.to_s.strip.empty?
+
+    text = ai_response.to_s.strip.downcase
+    return :ce if text.include?('buy ce') || text.include?('buy call')
+    return :pe if text.include?('buy pe') || text.include?('buy put')
+
+    nil
+  end
+
+  def hold_until_line(data)
+    expiry = data[:nearest_expiry].to_s.strip
+    return '—' if expiry.empty?
+
+    "Expiry #{expiry}. Exit by EOD (3:15 PM IST) or target/stop hit."
+  end
+
+  # Spot levels to monitor for the recommended option trade: when to enter, target, stop, what to expect.
+  def spot_monitor_lines(data, ai_response)
+    levels = data[:key_levels] || {}
+    res = Array(levels[:resistance]).map { |x| x.to_f }
+    sup = Array(levels[:support]).map { |x| x.to_f }
+    return {} if res.empty? && sup.empty?
+
+    bias = parse_bias(ai_response)
+    entry = target = stop = nil
+    if bias == :ce && res.any? && sup.any?
+      r1 = num(res.first)
+      s1 = num(sup.first)
+      entry = "Break & hold above R1 #{r1}"
+      target = "R1 #{r1}"
+      stop = "Below S1 #{s1}"
+    elsif bias == :pe && res.any? && sup.any?
+      r1 = num(res.first)
+      s1 = num(sup.first)
+      entry = "Break & hold below S1 #{s1}"
+      target = "S1 #{s1}"
+      stop = "Above R1 #{r1}"
+    end
+    expect_str = [res.any? ? "R: #{levels_str(levels[:resistance])}" : nil, sup.any? ? "S: #{levels_str(levels[:support])}" : nil].compact.join(' · ')
+    out = {}
+    out[:entry] = entry if entry
+    out[:target] = target if target
+    out[:stop] = stop if stop
+    out[:expect] = expect_str if expect_str && expect_str != '—'
+    out
+  end
+
+  def spot_monitor_telegram(data, ai_response)
+    lines = spot_monitor_lines(data, ai_response)
+    return '' if lines.empty?
+
+    parts = []
+    parts << "Entry: #{lines[:entry]}" if lines[:entry]
+    parts << "Target: #{lines[:target]}" if lines[:target]
+    parts << "Stop: #{lines[:stop]}" if lines[:stop]
+    return '' if parts.empty?
+
+    "\nSpot: #{parts.join(' · ')}"
   end
 
   def format_telegram(symbol, data, ai_response)
@@ -103,11 +191,16 @@ module FormatDhanReport
 
     iv_tg = [data[:atm_iv_ce], data[:atm_iv_pe]].any? ? " · IV #{num(data[:atm_iv_ce])}/#{num(data[:atm_iv_pe])}" : ''
     vol_tg = data[:total_volume].to_i.positive? ? " · Vol #{data[:total_volume]}" : ''
+    strike_tg = strike_to_trade_line(data[:strike_suggestions], ai_response)
+    hold_tg = hold_until_line(data)
+    spot_tg = spot_monitor_telegram(data, ai_response)
     <<~MSG
       #{symbol} Options · Dhan
       Spot #{num(data[:spot_price])} · PCR #{num(pcr)} · RSI #{num(data[:rsi_14])} · #{data[:trend]} · Chg #{data[:last_change]}%#{iv_tg}#{vol_tg}
       R:#{res} S:#{sup}
       SMC: #{data[:smc_summary] || '—'}
+      Strike: #{strike_tg}
+      Hold until: #{hold_tg}#{spot_tg}
 
       → #{verdict}
     MSG

@@ -24,7 +24,8 @@ module MockMarketData
       last_change: rand(-0.8..0.8).round(2),
       smc_summary: 'Structure HH/HL | Bullish FVG (mock)',
       key_levels: { resistance: [base + 80, base + 50], support: [base - 50, base - 80] },
-      pattern_summary: 'Pattern: None (mock)'
+      pattern_summary: 'Pattern: None (mock)',
+      strike_suggestions: { ce: [], pe: [] }
     }
   end
 end
